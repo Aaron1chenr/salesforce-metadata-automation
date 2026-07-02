@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>用于验证 Cursor 通过 Salesforce MCP 创建自定义对象的 POC 测试对象。</description>
+    <enableActivities>false</enableActivities>
+    <enableBulkApi>true</enableBulkApi>
+    <enableFeeds>false</enableFeeds>
+    <enableHistory>false</enableHistory>
+    <enableReports>true</enableReports>
+    <enableSearch>true</enableSearch>
+    <enableSharing>true</enableSharing>
+    <enableStreamingApi>true</enableStreamingApi>
+    <label>周四测试</label>
+    <nameField>
+        <label>周四测试名称</label>
+        <type>Text</type>
+    </nameField>
+    <pluralLabel>周四测试</pluralLabel>
+    <sharingModel>ReadWrite</sharingModel>
+</CustomObject>
