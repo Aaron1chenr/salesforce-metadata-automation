@@ -1,0 +1,45 @@
+name: Salesforce PR Validate
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate-salesforce:
+    name: validate-salesforce
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Salesforce CLI
+        run: npm install --global @salesforce/cli
+
+      - name: Authenticate Dev Org
+        run: |
+          echo "${{ secrets.DEV_SFDX_AUTH_URL }}" > ./DEV_SFDX_AUTH_URL.txt
+          sf org login sfdx-url \
+            --sfdx-url-file ./DEV_SFDX_AUTH_URL.txt \
+            --alias dev \
+            --set-default
+
+      - name: Validate Salesforce Metadata
+        run: |
+          sf project deploy start \
+            --source-dir force-app \
+            --target-org dev \
+            --test-level NoTestRun \
+            --dry-run \
+            --wait 20 \
+            --json
