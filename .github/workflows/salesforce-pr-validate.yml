@@ -28,11 +28,13 @@ jobs:
 
       - name: Authenticate Dev Org
         run: |
-          echo "${{ secrets.DEV_SFDX_AUTH_URL }}" > ./DEV_SFDX_AUTH_URL.txt
+          printf '%s' "${{ secrets.DEV_SFDX_AUTH_URL }}" > ./DEV_SFDX_AUTH_URL.txt
+          wc -c ./DEV_SFDX_AUTH_URL.txt
           sf org login sfdx-url \
             --sfdx-url-file ./DEV_SFDX_AUTH_URL.txt \
             --alias dev \
             --set-default
+          sf org display --target-org dev
 
       - name: Validate Salesforce Metadata
         run: |
