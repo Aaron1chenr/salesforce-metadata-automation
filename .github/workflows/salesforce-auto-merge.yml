@@ -26,13 +26,33 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            let pr = null;
+
             const prs = context.payload.workflow_run.pull_requests;
-            if (!prs || prs.length === 0) {
-              core.setFailed('No pull request found for this workflow run.');
-              return;
+
+            if (prs && prs.length > 0) {
+              pr = prs[0];
             }
 
-            const pr = prs[0];
+            if (!pr) {
+              const headBranch = context.payload.workflow_run.head_branch;
+
+              const result = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                head: `${context.repo.owner}:${headBranch}`
+              });
+
+              if (result.data.length > 0) {
+                pr = result.data[0];
+              }
+            }
+
+            if (!pr) {
+              core.setFailed('No open pull request found for this workflow run.');
+              return;
+            }
 
             core.setOutput('number', pr.number);
             core.setOutput('url', pr.html_url);
