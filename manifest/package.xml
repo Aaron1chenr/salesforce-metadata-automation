@@ -1,16 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
     <types>
+        <members>Monday_Automation_Test__c</members>
         <members>Thursday_Test__c</members>
         <name>CustomObject</name>
     </types>
     <types>
+        <members>Monday_Automation_Test__c.Automation_Source__c</members>
+        <members>Monday_Automation_Test__c.Execution_Result__c</members>
+        <members>Monday_Automation_Test__c.Test_Date__c</members>
+        <members>Monday_Automation_Test__c.Test_Name__c</members>
+        <members>Monday_Automation_Test__c.Test_Status__c</members>
         <members>Thursday_Test__c.Customer_Name__c</members>
         <members>Thursday_Test__c.Status__c</members>
         <members>Thursday_Test__c.Test_Date__c</members>
         <name>CustomField</name>
     </types>
     <types>
+        <members>Monday_Automation_Test__c</members>
         <members>Thursday_Test__c</members>
         <name>CustomTab</name>
     </types>
