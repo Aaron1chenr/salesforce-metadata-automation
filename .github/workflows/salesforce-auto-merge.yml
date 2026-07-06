@@ -55,14 +55,16 @@ jobs:
             }
 
             core.setOutput('number', pr.number);
-            core.setOutput('url', pr.html_url);
+            core.setOutput('repo', `${context.repo.owner}/${context.repo.repo}`);
 
       - name: Enable Auto Merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ steps.pr.outputs.url }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REPO: ${{ steps.pr.outputs.repo }}
         run: |
-          gh pr merge "$PR_URL" \
+          gh pr merge "$PR_NUMBER" \
+            --repo "$REPO" \
             --auto \
             --squash \
             --delete-branch
