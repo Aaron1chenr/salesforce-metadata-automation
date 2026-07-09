@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Parent_Work__c</fullName>
+    <deleteConstraint>SetNull</deleteConstraint>
+    <label>关联工作</label>
+    <referenceTo>Work_Management__c</referenceTo>
+    <relationshipLabel>关联子工作</relationshipLabel>
+    <relationshipName>Parent_Work_Work_Management</relationshipName>
+    <required>false</required>
+    <type>Lookup</type>
+</CustomField>
