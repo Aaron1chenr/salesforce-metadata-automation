@@ -23,7 +23,6 @@ jobs:
     runs-on: ubuntu-latest
 
 
-    # 只有 PR Validate 成功才执行
     if: >
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request'
@@ -31,7 +30,6 @@ jobs:
 
     steps:
 
-      # 获取对应 PR
       - name: Find Pull Request
 
         id: pr
@@ -45,7 +43,8 @@ jobs:
             let pr = null;
 
 
-            const prs = context.payload.workflow_run.pull_requests;
+            const prs =
+              context.payload.workflow_run.pull_requests;
 
 
             if (prs && prs.length > 0) {
@@ -108,16 +107,18 @@ jobs:
             );
 
 
-      # 立即 Merge
+
       - name: Merge Pull Request
 
         env:
 
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_NUMBER:
+            ${{ steps.pr.outputs.number }}
 
-          REPO: ${{ steps.pr.outputs.repo }}
+          REPO:
+            ${{ steps.pr.outputs.repo }}
 
 
         run: |
