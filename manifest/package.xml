@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
     <types>
+        <members>Management__c</members>
         <members>Monday_Automation_Test__c</members>
         <members>Thursday_Test__c</members>
         <members>Work_Management__c</members>
         <name>CustomObject</name>
     </types>
     <types>
+        <members>Management__c.Description__c</members>
+        <members>Management__c.End_Date__c</members>
+        <members>Management__c.Owner__c</members>
+        <members>Management__c.Priority__c</members>
+        <members>Management__c.Start_Date__c</members>
+        <members>Management__c.Status__c</members>
         <members>Monday_Automation_Test__c.Automation_Source__c</members>
         <members>Monday_Automation_Test__c.Execution_Result__c</members>
         <members>Monday_Automation_Test__c.Test_Date__c</members>
