@@ -4,41 +4,74 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'force-app/**'
-      - 'manifest/**'
-      - 'sfdx-project.json'
+
 
 permissions:
   contents: read
 
+
 jobs:
   deploy-salesforce:
+
     name: deploy-salesforce
+
     runs-on: ubuntu-latest
 
+
     steps:
+
+      # 1. 拉取 GitHub main 分支代码
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Install Salesforce CLI
-        run: npm install --global @salesforce/cli
 
+      # 2. 安装 Salesforce CLI
+      - name: Install Salesforce CLI
+        run: |
+          npm install --global @salesforce/cli
+
+
+      # 3. 登录 Salesforce Org
       - name: Authenticate Dev Org
         run: |
           printf '%s' "${{ secrets.DEV_SFDX_AUTH_URL }}" > ./DEV_SFDX_AUTH_URL.txt
+
+          echo "Auth URL length:"
           wc -c ./DEV_SFDX_AUTH_URL.txt
+
           sf org login sfdx-url \
             --sfdx-url-file ./DEV_SFDX_AUTH_URL.txt \
             --alias dev \
             --set-default
+
           sf org display --target-org dev
 
+
+      # 4. 检查 Salesforce DX 项目结构
+      - name: Validate Salesforce Project
+        run: |
+          ls -la
+
+          test -f sfdx-project.json
+
+          test -f manifest/package.xml
+
+
+      # 5. 部署 Salesforce Metadata
       - name: Deploy Salesforce Metadata
         run: |
           sf project deploy start \
-            --source-dir force-app \
+            --manifest manifest/package.xml \
             --target-org dev \
             --test-level NoTestRun \
-            --wait 20 \
+            --wait 30 \
+            --json
+
+
+      # 6. 输出部署结果
+      - name: Deployment Report
+        if: always()
+        run: |
+          sf project deploy report \
+            --target-org dev \
             --json
