@@ -113,7 +113,7 @@ jobs:
           test -f sfdx-project.json
 
 
-          test -f manifest/package.xml
+          test -d force-app
 
 
 
@@ -128,7 +128,7 @@ jobs:
         run: |
 
           sf project deploy start \
-            --manifest manifest/package.xml \
+            --source-dir force-app \
             --target-org dev \
             --test-level NoTestRun \
             --wait 30 \
