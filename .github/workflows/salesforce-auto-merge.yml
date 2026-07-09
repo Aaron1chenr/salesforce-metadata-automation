@@ -1,5 +1,6 @@
 name: Salesforce Auto Merge
 
+
 on:
   workflow_run:
     workflows:
@@ -7,64 +8,121 @@ on:
     types:
       - completed
 
+
 permissions:
   contents: write
   pull-requests: write
 
+
 jobs:
+
   auto-merge:
+
     name: auto-merge
+
     runs-on: ubuntu-latest
 
+
+    # 只有 PR Validate 成功才执行
     if: >
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request'
 
+
     steps:
+
+      # 获取对应 PR
       - name: Find Pull Request
+
         id: pr
+
         uses: actions/github-script@v7
+
         with:
+
           script: |
+
             let pr = null;
+
 
             const prs = context.payload.workflow_run.pull_requests;
 
+
             if (prs && prs.length > 0) {
+
               pr = prs[0];
+
             }
 
-            if (!pr) {
-              const headBranch = context.payload.workflow_run.head_branch;
 
-              const result = await github.rest.pulls.list({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                state: 'open',
-                head: `${context.repo.owner}:${headBranch}`
-              });
+            if (!pr) {
+
+              const headBranch =
+                context.payload.workflow_run.head_branch;
+
+
+              const result =
+                await github.rest.pulls.list({
+
+                  owner: context.repo.owner,
+
+                  repo: context.repo.repo,
+
+                  state: 'open',
+
+                  head:
+                    `${context.repo.owner}:${headBranch}`
+
+                });
+
 
               if (result.data.length > 0) {
+
                 pr = result.data[0];
+
               }
+
             }
+
 
             if (!pr) {
-              core.setFailed('No open pull request found for this workflow run.');
+
+              core.setFailed(
+                'No open pull request found.'
+              );
+
               return;
+
             }
 
-            core.setOutput('number', pr.number);
-            core.setOutput('repo', `${context.repo.owner}/${context.repo.repo}`);
 
-      - name: Enable Auto Merge
+            core.setOutput(
+              'number',
+              pr.number
+            );
+
+
+            core.setOutput(
+              'repo',
+              `${context.repo.owner}/${context.repo.repo}`
+            );
+
+
+      # 立即 Merge
+      - name: Merge Pull Request
+
         env:
+
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+
           REPO: ${{ steps.pr.outputs.repo }}
+
+
         run: |
+
           gh pr merge "$PR_NUMBER" \
             --repo "$REPO" \
-            --auto \
             --squash \
             --delete-branch
