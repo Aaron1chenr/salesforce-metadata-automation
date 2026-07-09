@@ -28,7 +28,6 @@
         <members>Work_Management__c.Description__c</members>
         <members>Work_Management__c.Due_Date__c</members>
         <members>Work_Management__c.Estimated_Hours__c</members>
-        <members>Work_Management__c.Owner__c</members>
         <members>Work_Management__c.Priority__c</members>
         <members>Work_Management__c.Remark__c</members>
         <members>Work_Management__c.Start_Date__c</members>
