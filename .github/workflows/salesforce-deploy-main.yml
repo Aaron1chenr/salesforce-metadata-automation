@@ -19,9 +19,18 @@ on:
       - 'sfdx-project.json'
 
 
+
 permissions:
 
   contents: read
+
+
+
+concurrency:
+
+  group: salesforce-deploy-main
+
+  cancel-in-progress: true
 
 
 
@@ -44,7 +53,9 @@ jobs:
     steps:
 
 
-      # 1. 拉取 main 分支代码
+      # =====================================
+      # Checkout
+      # =====================================
 
       - name: Checkout source
 
@@ -52,7 +63,9 @@ jobs:
 
 
 
-      # 2. 安装 Salesforce CLI
+      # =====================================
+      # Install Salesforce CLI
+      # =====================================
 
       - name: Install Salesforce CLI
 
@@ -62,27 +75,23 @@ jobs:
 
 
 
-      # 3. 登录 Salesforce Org
+      # =====================================
+      # Authenticate Salesforce Org
+      # =====================================
 
-      - name: Authenticate Dev Org
+      - name: Authenticate Salesforce Org
 
         run: |
 
-          printf '%s' "${{ secrets.DEV_SFDX_AUTH_URL }}" \
-          > ./DEV_SFDX_AUTH_URL.txt
-
-
-          echo "Auth URL length:"
-
-          wc -c ./DEV_SFDX_AUTH_URL.txt
-
+          printf '%s' \
+          "${{ secrets.DEV_SFDX_AUTH_URL }}" \
+          > DEV_SFDX_AUTH_URL.txt
 
 
           sf org login sfdx-url \
-            --sfdx-url-file ./DEV_SFDX_AUTH_URL.txt \
+            --sfdx-url-file DEV_SFDX_AUTH_URL.txt \
             --alias dev \
             --set-default
-
 
 
           sf org display \
@@ -90,7 +99,9 @@ jobs:
 
 
 
-      # 4. 检查 Salesforce DX 项目
+      # =====================================
+      # Validate DX Project Structure
+      # =====================================
 
       - name: Validate Salesforce Project
 
@@ -106,9 +117,13 @@ jobs:
 
 
 
-      # 5. 部署 Metadata
+      # =====================================
+      # Deploy Metadata
+      # =====================================
 
       - name: Deploy Salesforce Metadata
+
+        id: deploy
 
         run: |
 
@@ -117,11 +132,37 @@ jobs:
             --target-org dev \
             --test-level NoTestRun \
             --wait 30 \
-            --json
+            --json \
+            > deploy-result.json
 
 
 
-      # 6. 获取部署结果
+          cat deploy-result.json
+
+
+
+          JOB_ID=$(jq -r '.result.id' deploy-result.json)
+
+
+
+          if [ "$JOB_ID" = "null" ]; then
+
+            echo "Deployment Job ID not found"
+
+            exit 1
+
+          fi
+
+
+
+          echo "JOB_ID=$JOB_ID" >> $GITHUB_ENV
+
+
+
+
+      # =====================================
+      # Deployment Report
+      # =====================================
 
       - name: Deployment Report
 
@@ -131,4 +172,27 @@ jobs:
 
           sf project deploy report \
             --target-org dev \
+            --job-id $JOB_ID \
+            --json
+
+
+
+
+      # =====================================
+      # Generic Metadata Verification
+      # =====================================
+
+      - name: Verify Deployment Components
+
+        if: success()
+
+        run: |
+
+          echo "Deployment completed successfully."
+
+          echo "Checking deployed metadata status..."
+
+          sf project deploy report \
+            --target-org dev \
+            --job-id $JOB_ID \
             --json
