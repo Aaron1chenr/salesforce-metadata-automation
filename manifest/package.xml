@@ -3,6 +3,7 @@
     <types>
         <members>Monday_Automation_Test__c</members>
         <members>Thursday_Test__c</members>
+        <members>Work_Management__c</members>
         <name>CustomObject</name>
     </types>
     <types>
@@ -14,11 +15,18 @@
         <members>Thursday_Test__c.Customer_Name__c</members>
         <members>Thursday_Test__c.Status__c</members>
         <members>Thursday_Test__c.Test_Date__c</members>
+        <members>Work_Management__c.Description__c</members>
+        <members>Work_Management__c.Due_Date__c</members>
+        <members>Work_Management__c.Owner__c</members>
+        <members>Work_Management__c.Priority__c</members>
+        <members>Work_Management__c.Start_Date__c</members>
+        <members>Work_Management__c.Work_Status__c</members>
         <name>CustomField</name>
     </types>
     <types>
         <members>Monday_Automation_Test__c</members>
         <members>Thursday_Test__c</members>
+        <members>Work_Management__c</members>
         <name>CustomTab</name>
     </types>
     <version>67.0</version>
