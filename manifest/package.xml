@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
     <types>
+        <members>CR__c</members>
         <members>Management__c</members>
         <members>Monday_Automation_Test__c</members>
         <members>Thursday_Test__c</members>
@@ -8,6 +9,17 @@
         <name>CustomObject</name>
     </types>
     <types>
+        <members>CR__c.Actual_Completion_Date__c</members>
+        <members>CR__c.Approval_Comments__c</members>
+        <members>CR__c.CR_Number__c</members>
+        <members>CR__c.CR_Status__c</members>
+        <members>CR__c.CR_Type__c</members>
+        <members>CR__c.Description__c</members>
+        <members>CR__c.Impact_Scope__c</members>
+        <members>CR__c.Planned_Completion_Date__c</members>
+        <members>CR__c.Priority__c</members>
+        <members>CR__c.Related_Record_Id__c</members>
+        <members>CR__c.Submission_Date__c</members>
         <members>Management__c.Description__c</members>
         <members>Management__c.End_Date__c</members>
         <members>Management__c.Owner__c</members>
@@ -31,8 +43,8 @@
         <members>Work_Management__c.Priority__c</members>
         <members>Work_Management__c.Remark__c</members>
         <members>Work_Management__c.Start_Date__c</members>
-        <members>Work_Management__c.Work_Type__c</members>
         <members>Work_Management__c.Work_Status__c</members>
+        <members>Work_Management__c.Work_Type__c</members>
         <name>CustomField</name>
     </types>
     <types>
