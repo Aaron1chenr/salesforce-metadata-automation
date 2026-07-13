@@ -1,12 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
     <types>
-        <members>CR__c</members>
-        <members>Management__c</members>
-        <members>Monday_Automation_Test__c</members>
-        <members>Thursday_Test__c</members>
-        <members>Work_Management__c</members>
-        <name>CustomObject</name>
+        <members>Case.Request_Process</members>
+        <name>BusinessProcess</name>
     </types>
     <types>
         <members>CR__c.Actual_Completion_Date__c</members>
@@ -20,6 +16,12 @@
         <members>CR__c.Priority__c</members>
         <members>CR__c.Related_Record_Id__c</members>
         <members>CR__c.Submission_Date__c</members>
+        <members>Case.Consent_Request_Account__c</members>
+        <members>Case.Exception_Account__c</members>
+        <members>Case.Report_Request_Account__c</members>
+        <members>Consent_Request_Item__c.Consent_Request__c</members>
+        <members>Contact.Client_Account__c</members>
+        <members>Contact.Data_Subject_Account__c</members>
         <members>Management__c.Description__c</members>
         <members>Management__c.End_Date__c</members>
         <members>Management__c.Owner__c</members>
@@ -48,10 +50,29 @@
         <name>CustomField</name>
     </types>
     <types>
+        <members>CR__c</members>
+        <members>Consent_Request_Item__c</members>
+        <members>Consent__c</members>
+        <members>Management__c</members>
+        <members>Monday_Automation_Test__c</members>
+        <members>Report_Request_Item__c</members>
+        <members>Thursday_Test__c</members>
+        <members>Work_Management__c</members>
+        <name>CustomObject</name>
+    </types>
+    <types>
         <members>Monday_Automation_Test__c</members>
         <members>Thursday_Test__c</members>
         <members>Work_Management__c</members>
         <name>CustomTab</name>
+    </types>
+    <types>
+        <members>Case.Consent_Request</members>
+        <members>Case.Exception</members>
+        <members>Case.Report_Request</members>
+        <members>Contact.Client_User</members>
+        <members>Contact.Data_Subject</members>
+        <name>RecordType</name>
     </types>
     <version>67.0</version>
 </Package>
