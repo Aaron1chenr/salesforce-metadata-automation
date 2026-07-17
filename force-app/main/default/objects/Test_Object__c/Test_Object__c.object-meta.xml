@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>用于验证 Salesforce 自动化创建对象流程的测试对象。</description>
+    <enableActivities>true</enableActivities>
+    <enableReports>true</enableReports>
+    <enableSearch>true</enableSearch>
+    <label>测试对象</label>
+    <nameField>
+        <label>测试名称</label>
+        <type>Text</type>
+    </nameField>
+    <pluralLabel>Test Objects</pluralLabel>
+    <sharingModel>Private</sharingModel>
+</CustomObject>
