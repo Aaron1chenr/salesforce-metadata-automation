@@ -11,39 +11,140 @@ on:
       - ready_for_review
 
 permissions:
-
   contents: read
-
-  pull-requests: write
+  pull-requests: read
 
 jobs:
   validate-salesforce:
-    name: validate-salesforce
+    name: validate-salesforce-delta
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
+      # =====================================
+      # Checkout
+      # =====================================
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      # =====================================
+      # Install Salesforce CLI
+      # =====================================
       - name: Install Salesforce CLI
-        run: npm install --global @salesforce/cli
-
-      - name: Authenticate Dev Org
         run: |
-          printf '%s' "${{ secrets.DEV_SFDX_AUTH_URL }}" > ./DEV_SFDX_AUTH_URL.txt
-          wc -c ./DEV_SFDX_AUTH_URL.txt
+          npm install --global @salesforce/cli
+          sf --version
+
+      # =====================================
+      # Authenticate Salesforce Org
+      # 注意：这里仍然使用 DEV_SFDX_AUTH_URL
+      # =====================================
+      - name: Authenticate Salesforce Org
+        run: |
+          printf '%s' \
+          "${{ secrets.DEV_SFDX_AUTH_URL }}" \
+          > DEV_SFDX_AUTH_URL.txt
+
+          echo "Auth URL length:"
+          wc -c DEV_SFDX_AUTH_URL.txt
+
           sf org login sfdx-url \
-            --sfdx-url-file ./DEV_SFDX_AUTH_URL.txt \
+            --sfdx-url-file DEV_SFDX_AUTH_URL.txt \
             --alias dev \
             --set-default
-          sf org display --target-org dev
 
-      - name: Validate Salesforce Metadata
+          sf org display \
+            --target-org dev \
+            --json > org-info.json
+
+          cat org-info.json
+
+      # =====================================
+      # Validate Salesforce DX Project
+      # =====================================
+      - name: Validate Salesforce Project
         run: |
+          ls -la
+
+          test -f sfdx-project.json
+          test -d force-app
+
+      # =====================================
+      # Resolve Changed Metadata Files From PR
+      # 只校验 PR 中发生变化的 metadata
+      # =====================================
+      - name: Resolve Changed Metadata Files
+        id: delta
+        run: |
+          set -e
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          echo "BASE_SHA=$BASE_SHA"
+          echo "HEAD_SHA=$HEAD_SHA"
+
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
+
+          echo "Changed files:"
+          cat changed-files.txt
+
+          grep '^force-app/.*-meta.xml$' changed-files.txt \
+            | grep -v '/destructiveChanges' \
+            | grep -v '^force-app/.*/profiles/' \
+            | sort -u > delta-source-paths.txt || true
+
+          echo "Delta source paths:"
+          cat delta-source-paths.txt || true
+
+          COUNT=$(wc -l < delta-source-paths.txt | tr -d ' ')
+
+          echo "DELTA_COUNT=$COUNT" >> $GITHUB_ENV
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No Salesforce metadata changes detected."
+            echo "has_delta=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_delta=true" >> $GITHUB_OUTPUT
+          fi
+
+      # =====================================
+      # Validate Delta Metadata Only
+      # =====================================
+      - name: Validate Delta Metadata
+        if: steps.delta.outputs.has_delta == 'true'
+        run: |
+          set -e
+
+          DEPLOY_ARGS=()
+
+          while IFS= read -r path; do
+            if [ -f "$path" ]; then
+              DEPLOY_ARGS+=(--source-dir "$path")
+            fi
+          done < delta-source-paths.txt
+
+          echo "Validating the following metadata files only:"
+          printf '%s\n' "${DEPLOY_ARGS[@]}"
+
           sf project deploy start \
-            --source-dir force-app \
+            "${DEPLOY_ARGS[@]}" \
             --target-org dev \
             --test-level NoTestRun \
             --dry-run \
             --wait 20 \
-            --json
+            --json \
+            > validate-result.json
+
+          cat validate-result.json
+
+      # =====================================
+      # No Metadata Changes
+      # =====================================
+      - name: No Salesforce Metadata Changes
+        if: steps.delta.outputs.has_delta == 'false'
+        run: |
+          echo "No Salesforce metadata changes found in this PR."
+          echo "Validation skipped."
