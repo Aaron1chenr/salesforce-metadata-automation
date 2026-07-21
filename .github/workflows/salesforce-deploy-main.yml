@@ -1,198 +1,207 @@
 name: Salesforce Deploy Main
 
-
 on:
-
   push:
-
     branches:
-
       - main
-
-
     paths:
-
       - 'force-app/**'
-
       - 'manifest/**'
-
       - 'sfdx-project.json'
 
-
-
 permissions:
-
   contents: read
 
-
-
 concurrency:
-
   group: salesforce-deploy-main
-
   cancel-in-progress: true
 
-
-
 jobs:
-
-
   deploy-salesforce:
-
-
-    name: deploy-salesforce
-
-
+    name: deploy-salesforce-delta
     runs-on: ubuntu-latest
-
-
-    timeout-minutes: 30
-
-
+    timeout-minutes: 45
 
     steps:
-
-
       # =====================================
       # Checkout
       # =====================================
-
       - name: Checkout source
-
         uses: actions/checkout@v4
-
-
+        with:
+          fetch-depth: 0
 
       # =====================================
       # Install Salesforce CLI
       # =====================================
-
       - name: Install Salesforce CLI
-
         run: |
-
           npm install --global @salesforce/cli
-
-
+          sf --version
 
       # =====================================
       # Authenticate Salesforce Org
+      # 注意：这里仍然使用 DEV_SFDX_AUTH_URL
+      # 你只需要修改 GitHub Secret 的值即可切换 Org
       # =====================================
-
       - name: Authenticate Salesforce Org
-
         run: |
-
           printf '%s' \
           "${{ secrets.DEV_SFDX_AUTH_URL }}" \
           > DEV_SFDX_AUTH_URL.txt
 
+          echo "Auth URL length:"
+          wc -c DEV_SFDX_AUTH_URL.txt
 
           sf org login sfdx-url \
             --sfdx-url-file DEV_SFDX_AUTH_URL.txt \
             --alias dev \
             --set-default
 
-
           sf org display \
-            --target-org dev
+            --target-org dev \
+            --json > org-info.json
 
+          cat org-info.json
 
+          ORG_ID=$(jq -r '.result.id' org-info.json)
+          USERNAME=$(jq -r '.result.username' org-info.json)
+          INSTANCE_URL=$(jq -r '.result.instanceUrl' org-info.json)
+
+          echo "ORG_ID=$ORG_ID"
+          echo "USERNAME=$USERNAME"
+          echo "INSTANCE_URL=$INSTANCE_URL"
 
       # =====================================
-      # Validate DX Project Structure
+      # Validate Salesforce DX Project
       # =====================================
-
       - name: Validate Salesforce Project
-
         run: |
-
           ls -la
 
-
           test -f sfdx-project.json
-
-
           test -d force-app
 
-
-
       # =====================================
-      # Deploy Metadata
+      # Resolve Changed Metadata Files
+      # 只取本次 push 中发生变化的 Salesforce metadata 文件
+      # 不部署整个 force-app
+      # 不部署历史对象
       # =====================================
-
-      - name: Deploy Salesforce Metadata
-
-        id: deploy
-
+      - name: Resolve Changed Metadata Files
+        id: delta
         run: |
+          set -e
+
+          BASE_SHA="${{ github.event.before }}"
+          HEAD_SHA="${{ github.sha }}"
+          ZERO_SHA="0000000000000000000000000000000000000000"
+
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "$ZERO_SHA" ]; then
+            BASE_SHA=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          echo "BASE_SHA=$BASE_SHA"
+          echo "HEAD_SHA=$HEAD_SHA"
+
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
+
+          echo "Changed files:"
+          cat changed-files.txt
+
+          grep '^force-app/.*-meta.xml$' changed-files.txt \
+            | grep -v '/destructiveChanges' \
+            | grep -v '^force-app/.*/profiles/' \
+            | sort -u > delta-source-paths.txt || true
+
+          echo "Delta source paths:"
+          cat delta-source-paths.txt || true
+
+          COUNT=$(wc -l < delta-source-paths.txt | tr -d ' ')
+
+          echo "DELTA_COUNT=$COUNT" >> $GITHUB_ENV
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No Salesforce metadata changes detected."
+            echo "has_delta=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_delta=true" >> $GITHUB_OUTPUT
+          fi
+
+      # =====================================
+      # Deploy Delta Metadata Only
+      # 只部署本次变更文件
+      # =====================================
+      - name: Deploy Delta Metadata
+        if: steps.delta.outputs.has_delta == 'true'
+        id: deploy
+        run: |
+          set -e
+
+          DEPLOY_ARGS=()
+
+          while IFS= read -r path; do
+            if [ -f "$path" ]; then
+              DEPLOY_ARGS+=(--source-dir "$path")
+            fi
+          done < delta-source-paths.txt
+
+          echo "Deploying the following metadata files only:"
+          printf '%s\n' "${DEPLOY_ARGS[@]}"
 
           sf project deploy start \
-            --source-dir force-app \
+            "${DEPLOY_ARGS[@]}" \
             --target-org dev \
             --test-level NoTestRun \
             --wait 30 \
             --json \
             > deploy-result.json
 
-
-
           cat deploy-result.json
 
-
-
           JOB_ID=$(jq -r '.result.id' deploy-result.json)
+          STATUS=$(jq -r '.result.status' deploy-result.json)
 
-
-
-          if [ "$JOB_ID" = "null" ]; then
-
-            echo "Deployment Job ID not found"
-
+          if [ "$JOB_ID" = "null" ] || [ -z "$JOB_ID" ]; then
+            echo "Deployment Job ID not found."
             exit 1
-
           fi
 
-
-
           echo "JOB_ID=$JOB_ID" >> $GITHUB_ENV
-
-
-
+          echo "DEPLOY_STATUS=$STATUS" >> $GITHUB_ENV
 
       # =====================================
       # Deployment Report
       # =====================================
-
       - name: Deployment Report
-
-        if: always()
-
+        if: steps.delta.outputs.has_delta == 'true' && always()
         run: |
+          if [ -z "$JOB_ID" ]; then
+            echo "No deployment job id found. Skip report."
+            exit 0
+          fi
 
           sf project deploy report \
             --target-org dev \
-            --job-id $JOB_ID \
+            --job-id "$JOB_ID" \
             --json
 
-
-
-
       # =====================================
-      # Generic Metadata Verification
+      # No Metadata Changes
       # =====================================
-
-      - name: Verify Deployment Components
-
-        if: success()
-
+      - name: No Salesforce Metadata Changes
+        if: steps.delta.outputs.has_delta == 'false'
         run: |
+          echo "No Salesforce metadata changes found in this commit."
+          echo "Deployment skipped."
 
+      # =====================================
+      # Generic Result
+      # =====================================
+      - name: Generic Deployment Verification
+        if: steps.delta.outputs.has_delta == 'true' && success()
+        run: |
           echo "Deployment completed successfully."
-
-          echo "Checking deployed metadata status..."
-
-          sf project deploy report \
-            --target-org dev \
-            --job-id $JOB_ID \
-            --json
+          echo "This workflow deployed only changed metadata files."
+          echo "It did not deploy the whole force-app folder."
+          echo "It did not deploy historical objects by default."
