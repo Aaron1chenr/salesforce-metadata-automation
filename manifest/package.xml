@@ -17,11 +17,27 @@
         <members>CR__c.Related_Record_Id__c</members>
         <members>CR__c.Submission_Date__c</members>
         <members>Case.Consent_Request_Account__c</members>
+        <members>Case.EngineeringReqNumber__c</members>
         <members>Case.Exception_Account__c</members>
+        <members>Case.PotentialLiability__c</members>
+        <members>Case.Product__c</members>
         <members>Case.Report_Request_Account__c</members>
+        <members>Case.SLAViolation__c</members>
         <members>Consent_Request_Item__c.Consent_Request__c</members>
         <members>Contact.Client_Account__c</members>
         <members>Contact.Data_Subject_Account__c</members>
+        <members>Contact.Languages__c</members>
+        <members>Contact.Level__c</members>
+        <members>Cursor__c.Execution_Result__c</members>
+        <members>Cursor__c.Send_To_Cursor__c</members>
+        <members>Cursor__c.prompt_1__c</members>
+        <members>Energy_Audit__c.Account__c</members>
+        <members>Energy_Audit__c.Annual_Energy_Usage_kWh__c</members>
+        <members>Energy_Audit__c.Audit_Notes__c</members>
+        <members>Energy_Audit__c.Average_Annual_Electric_Cost__c</members>
+        <members>Energy_Audit__c.Type_of_Installation__c</members>
+        <members>Favorite__c.Contact__c</members>
+        <members>Favorite__c.Property__c</members>
         <members>Management__c.Description__c</members>
         <members>Management__c.End_Date__c</members>
         <members>Management__c.Owner__c</members>
@@ -33,6 +49,12 @@
         <members>Monday_Automation_Test__c.Test_Date__c</members>
         <members>Monday_Automation_Test__c.Test_Name__c</members>
         <members>Monday_Automation_Test__c.Test_Status__c</members>
+        <members>Offer__c.Contact__c</members>
+        <members>Offer__c.Offer_Amount__c</members>
+        <members>Offer__c.Property__c</members>
+        <members>Offer__c.Target_Close_Date__c</members>
+        <members>Property__c.Price__c</members>
+        <members>Property__c.Street_Address__c</members>
         <members>Thursday_Test__c.Customer_Name__c</members>
         <members>Thursday_Test__c.Status__c</members>
         <members>Thursday_Test__c.Test_Date__c</members>
@@ -53,18 +75,35 @@
         <members>CR__c</members>
         <members>Consent_Request_Item__c</members>
         <members>Consent__c</members>
+        <members>Cursor__c</members>
+        <members>Energy_Audit__c</members>
+        <members>Favorite__c</members>
+        <members>Fix_Manual_Ready__c</members>
         <members>Management__c</members>
         <members>Monday_Automation_Test__c</members>
+        <members>Offer__c</members>
+        <members>Property__c</members>
         <members>Report_Request_Item__c</members>
+        <members>Test_Object__c</members>
         <members>Thursday_Test__c</members>
         <members>Work_Management__c</members>
         <name>CustomObject</name>
     </types>
     <types>
+        <members>Cursor__c</members>
+        <members>Energy_Audit__c</members>
+        <members>Favorite__c</members>
         <members>Monday_Automation_Test__c</members>
+        <members>Property__c</members>
         <members>Thursday_Test__c</members>
         <members>Work_Management__c</members>
         <name>CustomTab</name>
+    </types>
+    <types>
+        <members>SalesCloudSeller</members>
+        <members>sfdc_nc_constraints_engine_deploy</members>
+        <members>sfdc_scrt2</members>
+        <name>PermissionSet</name>
     </types>
     <types>
         <members>Case.Consent_Request</members>
