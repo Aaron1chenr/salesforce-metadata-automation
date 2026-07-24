@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>CR_Status__c</fullName>
     <label>CR状态</label>
@@ -9,9 +9,9 @@
         <valueSetDefinition>
             <sorted>false</sorted>
             <value>
-                <fullName>草稿</fullName>
+                <fullName>已取消</fullName>
                 <default>false</default>
-                <label>草稿</label>
+                <label>已取消</label>
             </value>
             <value>
                 <fullName>待评估</fullName>
@@ -19,14 +19,19 @@
                 <label>待评估</label>
             </value>
             <value>
-                <fullName>评估中</fullName>
+                <fullName>已拒绝</fullName>
                 <default>false</default>
-                <label>评估中</label>
+                <label>已拒绝</label>
             </value>
             <value>
                 <fullName>待审批</fullName>
                 <default>false</default>
                 <label>待审批</label>
+            </value>
+            <value>
+                <fullName>已完成</fullName>
+                <default>false</default>
+                <label>已完成</label>
             </value>
             <value>
                 <fullName>已批准</fullName>
@@ -39,19 +44,14 @@
                 <label>实施中</label>
             </value>
             <value>
-                <fullName>已完成</fullName>
+                <fullName>草稿</fullName>
                 <default>false</default>
-                <label>已完成</label>
+                <label>草稿</label>
             </value>
             <value>
-                <fullName>已拒绝</fullName>
+                <fullName>评估中</fullName>
                 <default>false</default>
-                <label>已拒绝</label>
-            </value>
-            <value>
-                <fullName>已取消</fullName>
-                <default>false</default>
-                <label>已取消</label>
+                <label>评估中</label>
             </value>
         </valueSetDefinition>
     </valueSet>

@@ -1,7 +1,6 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
     <deploymentStatus>Deployed</deploymentStatus>
-    <description>用于管理业务事项、执行计划、负责人、状态及相关信息的自定义对象</description>
     <enableActivities>true</enableActivities>
     <enableHistory>true</enableHistory>
     <enableReports>true</enableReports>

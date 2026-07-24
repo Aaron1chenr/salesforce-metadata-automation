@@ -1,62 +1,102 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
     <types>
         <members>Case.Request_Process</members>
         <name>BusinessProcess</name>
     </types>
     <types>
-        <members>CR__c.Actual_Completion_Date__c</members>
-        <members>CR__c.Approval_Comments__c</members>
-        <members>CR__c.CR_Number__c</members>
+        <members>Account.Active__c</members>
+        <members>Account.CustomerPriority__c</members>
+        <members>Account.NumberofLocations__c</members>
+        <members>Account.SLAExpirationDate__c</members>
+        <members>Account.SLASerialNumber__c</members>
+        <members>Account.SLA__c</members>
+        <members>Account.UpsellOpportunity__c</members>
         <members>CR__c.CR_Status__c</members>
         <members>CR__c.CR_Type__c</members>
-        <members>CR__c.Description__c</members>
-        <members>CR__c.Impact_Scope__c</members>
-        <members>CR__c.Planned_Completion_Date__c</members>
-        <members>CR__c.Priority__c</members>
-        <members>CR__c.Related_Record_Id__c</members>
-        <members>CR__c.Submission_Date__c</members>
-        <members>Case.Consent_Request_Account__c</members>
-        <members>Case.Exception_Account__c</members>
-        <members>Case.Report_Request_Account__c</members>
+        <members>Case.EngineeringReqNumber__c</members>
+        <members>Case.PotentialLiability__c</members>
+        <members>Case.Product__c</members>
+        <members>Case.SLAViolation__c</members>
         <members>Consent_Request_Item__c.Consent_Request__c</members>
-        <members>Contact.Client_Account__c</members>
-        <members>Contact.Data_Subject_Account__c</members>
-        <members>Management__c.Description__c</members>
-        <members>Management__c.End_Date__c</members>
-        <members>Management__c.Owner__c</members>
-        <members>Management__c.Priority__c</members>
-        <members>Management__c.Start_Date__c</members>
+        <members>Contact.Languages__c</members>
+        <members>Contact.Level__c</members>
+        <members>Cursor__c.Execution_Result__c</members>
+        <members>Cursor__c.Send_To_Cursor__c</members>
+        <members>Cursor__c.prompt_1__c</members>
+        <members>Energy_Audit__c.Account__c</members>
+        <members>Energy_Audit__c.Annual_Energy_Usage_kWh__c</members>
+        <members>Energy_Audit__c.Audit_Notes__c</members>
+        <members>Energy_Audit__c.Average_Annual_Electric_Cost__c</members>
+        <members>Energy_Audit__c.Type_of_Installation__c</members>
+        <members>Favorite__c.Contact__c</members>
+        <members>Favorite__c.Property__c</members>
+        <members>Lead.CurrentGenerators__c</members>
+        <members>Lead.NumberofLocations__c</members>
+        <members>Lead.Primary__c</members>
+        <members>Lead.ProductInterest__c</members>
+        <members>Lead.SICCode__c</members>
         <members>Management__c.Status__c</members>
-        <members>Monday_Automation_Test__c.Automation_Source__c</members>
-        <members>Monday_Automation_Test__c.Execution_Result__c</members>
-        <members>Monday_Automation_Test__c.Test_Date__c</members>
-        <members>Monday_Automation_Test__c.Test_Name__c</members>
-        <members>Monday_Automation_Test__c.Test_Status__c</members>
-        <members>Thursday_Test__c.Customer_Name__c</members>
-        <members>Thursday_Test__c.Status__c</members>
-        <members>Thursday_Test__c.Test_Date__c</members>
-        <members>Work_Management__c.Actual_Hours__c</members>
-        <members>Work_Management__c.Completed_Date__c</members>
-        <members>Work_Management__c.Completion_Percentage__c</members>
-        <members>Work_Management__c.Description__c</members>
-        <members>Work_Management__c.Due_Date__c</members>
-        <members>Work_Management__c.Estimated_Hours__c</members>
-        <members>Work_Management__c.Priority__c</members>
-        <members>Work_Management__c.Remark__c</members>
-        <members>Work_Management__c.Start_Date__c</members>
+        <members>Offer__c.Contact__c</members>
+        <members>Offer__c.Offer_Amount__c</members>
+        <members>Offer__c.Property__c</members>
+        <members>Offer__c.Target_Close_Date__c</members>
+        <members>Opportunity.CurrentGenerators__c</members>
+        <members>Opportunity.DeliveryInstallationStatus__c</members>
+        <members>Opportunity.MainCompetitors__c</members>
+        <members>Opportunity.OrderNumber__c</members>
+        <members>Opportunity.TrackingNumber__c</members>
+        <members>Property__c.Price__c</members>
+        <members>Property__c.Street_Address__c</members>
         <members>Work_Management__c.Work_Status__c</members>
-        <members>Work_Management__c.Work_Type__c</members>
         <name>CustomField</name>
     </types>
     <types>
+        <members>Account</members>
+        <members>Asset</members>
+        <members>Attachment</members>
         <members>CR__c</members>
+        <members>Campaign</members>
+        <members>CampaignMember</members>
+        <members>Case</members>
+        <members>CaseComment</members>
         <members>Consent_Request_Item__c</members>
         <members>Consent__c</members>
+        <members>Contact</members>
+        <members>ContentDocument</members>
+        <members>ContentVersion</members>
+        <members>Contract</members>
+        <members>ContractLineItem</members>
+        <members>Cursor__c</members>
+        <members>Document</members>
+        <members>Energy_Audit__c</members>
+        <members>Event</members>
+        <members>Favorite__c</members>
+        <members>FeedComment</members>
+        <members>FeedItem</members>
+        <members>Fix_Manual_Ready__c</members>
+        <members>Lead</members>
         <members>Management__c</members>
         <members>Monday_Automation_Test__c</members>
+        <members>Note</members>
+        <members>Offer__c</members>
+        <members>Opportunity</members>
+        <members>OpportunityContactRole</members>
+        <members>OpportunityLineItem</members>
+        <members>OpportunityStage</members>
+        <members>Order</members>
+        <members>OrderItem</members>
+        <members>Pricebook2</members>
+        <members>PricebookEntry</members>
+        <members>Product2</members>
+        <members>Property__c</members>
+        <members>RecordType</members>
         <members>Report_Request_Item__c</members>
+        <members>Task</members>
+        <members>Test_Object__c</members>
         <members>Thursday_Test__c</members>
+        <members>User</members>
+        <members>UserRole</members>
         <members>Work_Management__c</members>
         <name>CustomObject</name>
     </types>

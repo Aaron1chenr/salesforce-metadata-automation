@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
-    <fullName>Estimated_Hours__c</fullName>
-    <label>预计工时</label>
-    <precision>8</precision>
-    <scale>2</scale>
-    <type>Number</type>
-</CustomField>

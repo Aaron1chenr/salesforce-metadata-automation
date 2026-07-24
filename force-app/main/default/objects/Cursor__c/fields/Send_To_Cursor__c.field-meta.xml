@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Send_To_Cursor__c</fullName>
+    <description>Whether to send this record to Cursor.</description>
+    <defaultValue>false</defaultValue>
+    <label>Send To Cursor</label>
+    <type>Checkbox</type>
+</CustomField>

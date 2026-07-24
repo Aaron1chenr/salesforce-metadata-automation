@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Work_Status__c</fullName>
     <label>Work Status</label>
@@ -9,9 +9,9 @@
         <valueSetDefinition>
             <sorted>false</sorted>
             <value>
-                <fullName>Not Started</fullName>
+                <fullName>Completed</fullName>
                 <default>false</default>
-                <label>Not Started</label>
+                <label>Completed</label>
             </value>
             <value>
                 <fullName>In Progress</fullName>
@@ -19,9 +19,9 @@
                 <label>In Progress</label>
             </value>
             <value>
-                <fullName>Completed</fullName>
+                <fullName>Not Started</fullName>
                 <default>false</default>
-                <label>Completed</label>
+                <label>Not Started</label>
             </value>
             <value>
                 <fullName>Blocked</fullName>

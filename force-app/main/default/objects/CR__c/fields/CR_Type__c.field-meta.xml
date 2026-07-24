@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='UTF-8'?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>CR_Type__c</fullName>
     <label>CR类型</label>
@@ -8,16 +8,6 @@
         <restricted>true</restricted>
         <valueSetDefinition>
             <sorted>false</sorted>
-            <value>
-                <fullName>功能变更</fullName>
-                <default>false</default>
-                <label>功能变更</label>
-            </value>
-            <value>
-                <fullName>需求调整</fullName>
-                <default>false</default>
-                <label>需求调整</label>
-            </value>
             <value>
                 <fullName>缺陷修复</fullName>
                 <default>false</default>
@@ -34,9 +24,19 @@
                 <label>配置修改</label>
             </value>
             <value>
+                <fullName>需求调整</fullName>
+                <default>false</default>
+                <label>需求调整</label>
+            </value>
+            <value>
                 <fullName>其他</fullName>
                 <default>false</default>
                 <label>其他</label>
+            </value>
+            <value>
+                <fullName>功能变更</fullName>
+                <default>false</default>
+                <label>功能变更</label>
             </value>
         </valueSetDefinition>
     </valueSet>

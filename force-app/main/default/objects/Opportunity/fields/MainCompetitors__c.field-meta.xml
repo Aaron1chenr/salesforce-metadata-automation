@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>MainCompetitors__c</fullName>
+    <label>Main Competitor(s)</label>
+    <required>false</required>
+    <type>Text</type>
+    <length>100</length>
+</CustomField>
