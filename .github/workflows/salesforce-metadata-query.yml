@@ -1,0 +1,733 @@
+name: Salesforce Metadata Query
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Metadata 查询范围
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - objects
+
+permissions:
+  contents: write
+
+concurrency:
+  group: salesforce-metadata-query
+  cancel-in-progress: false
+
+env:
+  # Metadata 快照根目录
+  SNAPSHOT_ROOT: org-metadata-snapshots
+
+  # 中国标准时间
+  TZ: Asia/Shanghai
+
+  # 降低大型 Org 查询 Metadata 时的并发
+  SF_LIST_METADATA_BATCH_SIZE: "5"
+
+  # Salesforce API Version
+  SOURCE_API_VERSION: "67.0"
+
+jobs:
+  retrieve-metadata:
+    name: Retrieve Salesforce Metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      # ============================================================
+      # 1. 检出 main 分支
+      # ============================================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # ============================================================
+      # 2. 安装 Salesforce CLI
+      # ============================================================
+      - name: Install Salesforce CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npm install --global @salesforce/cli
+
+          echo "Salesforce CLI version:"
+          sf --version
+
+      # ============================================================
+      # 3. 登录固定 Salesforce Org
+      #
+      # 不设置 Alias。
+      # 登录后将该 Org 设置为默认 Org。
+      # ============================================================
+      - name: Authenticate Salesforce org
+        shell: bash
+        env:
+          SFDX_AUTH_URL: ${{ secrets.DEV_SFDX_AUTH_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SFDX_AUTH_URL:-}" ]; then
+            echo "::error::未配置 GitHub Secret：DEV_SFDX_AUTH_URL"
+            exit 1
+          fi
+
+          AUTH_FILE="${RUNNER_TEMP}/salesforce-sfdx-auth-url.txt"
+
+          cleanup() {
+            rm -f "$AUTH_FILE"
+          }
+
+          trap cleanup EXIT
+
+          printf '%s' "$SFDX_AUTH_URL" > "$AUTH_FILE"
+          chmod 600 "$AUTH_FILE"
+
+          sf org login sfdx-url \
+            --sfdx-url-file "$AUTH_FILE" \
+            --set-default
+
+          ORG_USERNAME="$(
+            sf org display \
+              --json \
+              | jq -r '.result.username'
+          )"
+
+          if [ -z "$ORG_USERNAME" ] || [ "$ORG_USERNAME" = "null" ]; then
+            echo "::error::无法获取默认 Salesforce Org 用户名。"
+            exit 1
+          fi
+
+          echo "ORG_USERNAME=${ORG_USERNAME}" >> "$GITHUB_ENV"
+
+          echo "Salesforce Org authentication completed."
+
+      # ============================================================
+      # 4. 创建日期+固定环境名称目录以及 SFDX 项目
+      #
+      # 中国时区日期示例：
+      # org-metadata-snapshots/
+      # └── 20260728-DEV/
+      #     ├── all-metadata/
+      #     └── object-metadata/
+      # ============================================================
+      - name: Prepare SFDX snapshot project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          QUERY_SCOPE="${{ inputs.scope }}"
+
+          # TZ 已设置为 Asia/Shanghai
+          TODAY="$(date +'%Y%m%d')"
+
+          # 环境固定为 DEV，直接写入目录名称
+          DATE_ROOT="${SNAPSHOT_ROOT}/${TODAY}-DEV"
+
+          case "$QUERY_SCOPE" in
+            all)
+              SCOPE_DIRECTORY="all-metadata"
+              SCOPE_LABEL="All Metadata"
+              ;;
+
+            objects)
+              SCOPE_DIRECTORY="object-metadata"
+              SCOPE_LABEL="Object Metadata"
+              ;;
+
+            *)
+              echo "::error::不支持的查询范围：${QUERY_SCOPE}"
+              exit 1
+              ;;
+          esac
+
+          SNAPSHOT_DIR="${DATE_ROOT}/${SCOPE_DIRECTORY}"
+
+          # 同一天重复查询相同范围时覆盖旧快照
+          rm -rf "$SNAPSHOT_DIR"
+
+          mkdir -p "$SNAPSHOT_DIR/force-app/main/default"
+          mkdir -p "$SNAPSHOT_DIR/manifest"
+          mkdir -p "$SNAPSHOT_DIR/retrieve-manifests"
+
+          cat > "$SNAPSHOT_DIR/sfdx-project.json" <<JSON
+          {
+            "packageDirectories": [
+              {
+                "path": "force-app",
+                "default": true
+              }
+            ],
+            "namespace": "",
+            "sourceApiVersion": "${SOURCE_API_VERSION}"
+          }
+          JSON
+
+          cat > "$SNAPSHOT_DIR/.gitignore" <<'GITIGNORE'
+          .sf/
+          .sfdx/
+          node_modules/
+          GITIGNORE
+
+          echo "QUERY_SCOPE=${QUERY_SCOPE}" >> "$GITHUB_ENV"
+          echo "SCOPE_LABEL=${SCOPE_LABEL}" >> "$GITHUB_ENV"
+          echo "SCOPE_DIRECTORY=${SCOPE_DIRECTORY}" >> "$GITHUB_ENV"
+          echo "TODAY=${TODAY}" >> "$GITHUB_ENV"
+          echo "DATE_ROOT=${DATE_ROOT}" >> "$GITHUB_ENV"
+          echo "SNAPSHOT_DIR=${SNAPSHOT_DIR}" >> "$GITHUB_ENV"
+
+          echo "Snapshot directory: ${SNAPSHOT_DIR}"
+
+      # ============================================================
+      # 5. 根据查询范围生成 package.xml
+      # ============================================================
+      - name: Generate query manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$SNAPSHOT_DIR"
+
+          if [ "$QUERY_SCOPE" = "all" ]; then
+            echo "Querying all discoverable Metadata..."
+
+            sf project generate manifest \
+              --from-org "$ORG_USERNAME" \
+              --output-dir manifest \
+              --type package
+
+          elif [ "$QUERY_SCOPE" = "objects" ]; then
+            echo "Querying object-related Metadata..."
+
+            OBJECT_METADATA_TYPES=(
+              "CustomObject"
+              "CustomField"
+              "RecordType"
+              "BusinessProcess"
+              "CompactLayout"
+              "Layout"
+              "ListView"
+              "ValidationRule"
+              "FieldSet"
+              "WebLink"
+              "SharingRules"
+            )
+
+            METADATA_ARGUMENTS=()
+
+            for METADATA_TYPE in "${OBJECT_METADATA_TYPES[@]}"; do
+              METADATA_ARGUMENTS+=(
+                --metadata
+                "$METADATA_TYPE"
+              )
+            done
+
+            sf project generate manifest \
+              --from-org "$ORG_USERNAME" \
+              "${METADATA_ARGUMENTS[@]}" \
+              --output-dir manifest \
+              --type package
+          fi
+
+          if [ ! -s "manifest/package.xml" ]; then
+            echo "::error::manifest/package.xml 未生成或内容为空。"
+            exit 1
+          fi
+
+          echo "Query manifest generated successfully."
+
+      # ============================================================
+      # 6. 将大型 package.xml 拆分成较小的 Retrieve Manifest
+      # ============================================================
+      - name: Split retrieve manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$SNAPSHOT_DIR"
+
+          python3 <<'PYTHON'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          namespace = "http://soap.sforce.com/2006/04/metadata"
+          ns = {"m": namespace}
+
+          ET.register_namespace("", namespace)
+
+          source_file = Path("manifest/package.xml")
+          output_directory = Path("retrieve-manifests")
+
+          output_directory.mkdir(parents=True, exist_ok=True)
+
+          for existing_file in output_directory.glob("*.xml"):
+              existing_file.unlink()
+
+          tree = ET.parse(source_file)
+          source_root = tree.getroot()
+
+          version_element = source_root.find("m:version", ns)
+
+          if version_element is None or not version_element.text:
+              raise RuntimeError("package.xml 中缺少 API Version。")
+
+          api_version = version_element.text.strip()
+
+          members_per_segment = 500
+          max_type_segments_per_manifest = 10
+          max_members_per_manifest = 2000
+
+          segments = []
+
+          for type_element in source_root.findall("m:types", ns):
+              name_element = type_element.find("m:name", ns)
+
+              if name_element is None or not name_element.text:
+                  continue
+
+              metadata_type = name_element.text.strip()
+
+              members = [
+                  member.text.strip()
+                  for member in type_element.findall("m:members", ns)
+                  if member.text and member.text.strip()
+              ]
+
+              if not members:
+                  continue
+
+              for start in range(0, len(members), members_per_segment):
+                  member_chunk = members[
+                      start:start + members_per_segment
+                  ]
+
+                  segments.append(
+                      {
+                          "type": metadata_type,
+                          "members": member_chunk,
+                      }
+                  )
+
+          manifests = []
+          current_manifest = []
+          current_member_count = 0
+
+          for segment in segments:
+              segment_size = len(segment["members"])
+
+              exceeds_type_limit = (
+                  len(current_manifest)
+                  >= max_type_segments_per_manifest
+              )
+
+              exceeds_member_limit = (
+                  current_member_count + segment_size
+                  > max_members_per_manifest
+              )
+
+              if current_manifest and (
+                  exceeds_type_limit or exceeds_member_limit
+              ):
+                  manifests.append(current_manifest)
+                  current_manifest = []
+                  current_member_count = 0
+
+              current_manifest.append(segment)
+              current_member_count += segment_size
+
+          if current_manifest:
+              manifests.append(current_manifest)
+
+          if not manifests:
+              raise RuntimeError(
+                  "package.xml 中没有找到可 Retrieve 的 Metadata。"
+              )
+
+          for index, manifest_segments in enumerate(
+              manifests,
+              start=1,
+          ):
+              package_root = ET.Element(
+                  f"{{{namespace}}}Package"
+              )
+
+              for segment in manifest_segments:
+                  types_element = ET.SubElement(
+                      package_root,
+                      f"{{{namespace}}}types",
+                  )
+
+                  for member_name in segment["members"]:
+                      member_element = ET.SubElement(
+                          types_element,
+                          f"{{{namespace}}}members",
+                      )
+
+                      member_element.text = member_name
+
+                  type_name_element = ET.SubElement(
+                      types_element,
+                      f"{{{namespace}}}name",
+                  )
+
+                  type_name_element.text = segment["type"]
+
+              output_version = ET.SubElement(
+                  package_root,
+                  f"{{{namespace}}}version",
+              )
+
+              output_version.text = api_version
+
+              output_file = output_directory / (
+                  f"package-{index:03d}.xml"
+              )
+
+              ET.ElementTree(package_root).write(
+                  output_file,
+                  encoding="UTF-8",
+                  xml_declaration=True,
+              )
+
+          print(
+              f"Generated {len(manifests)} retrieve manifests."
+          )
+          PYTHON
+
+          MANIFEST_COUNT="$(
+            find retrieve-manifests \
+              -maxdepth 1 \
+              -type f \
+              -name 'package-*.xml' \
+              | wc -l \
+              | tr -d '[:space:]'
+          )"
+
+          if [ "$MANIFEST_COUNT" -eq 0 ]; then
+            echo "::error::没有生成 Retrieve Manifest。"
+            exit 1
+          fi
+
+          echo "RETRIEVE_MANIFEST_COUNT=${MANIFEST_COUNT}" \
+            >> "$GITHUB_ENV"
+
+          echo "Retrieve manifest count: ${MANIFEST_COUNT}"
+
+      # ============================================================
+      # 7. 逐批下载 Metadata
+      #
+      # 不指定 Alias 或 --target-org。
+      # Salesforce CLI 自动使用默认 Org。
+      # ============================================================
+      - name: Retrieve Metadata in SFDX format
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$SNAPSHOT_DIR"
+
+          FAILED_FILE="FAILED_RETRIEVES.txt"
+
+          : > "$FAILED_FILE"
+
+          SUCCESS_COUNT=0
+          FAILED_COUNT=0
+
+          while IFS= read -r MANIFEST_FILE; do
+            echo "========================================"
+            echo "Retrieving: ${MANIFEST_FILE}"
+            echo "========================================"
+
+            if sf project retrieve start \
+              --manifest "$MANIFEST_FILE" \
+              --ignore-conflicts \
+              --wait 120
+            then
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            else
+              FAILED_COUNT=$((FAILED_COUNT + 1))
+
+              basename "$MANIFEST_FILE" \
+                >> "$FAILED_FILE"
+
+              echo "::warning::Retrieve failed: ${MANIFEST_FILE}"
+            fi
+          done < <(
+            find retrieve-manifests \
+              -maxdepth 1 \
+              -type f \
+              -name 'package-*.xml' \
+              | sort
+          )
+
+          if [ "$FAILED_COUNT" -eq 0 ]; then
+            rm -f "$FAILED_FILE"
+          fi
+
+          METADATA_FILE_COUNT="$(
+            find force-app/main/default \
+              -type f \
+              | wc -l \
+              | tr -d '[:space:]'
+          )"
+
+          if [ "$METADATA_FILE_COUNT" -eq 0 ]; then
+            echo "::error::没有下载到任何 Metadata 文件。"
+            exit 1
+          fi
+
+          echo "SUCCESSFUL_RETRIEVE_COUNT=${SUCCESS_COUNT}" \
+            >> "$GITHUB_ENV"
+
+          echo "FAILED_RETRIEVE_COUNT=${FAILED_COUNT}" \
+            >> "$GITHUB_ENV"
+
+          echo "METADATA_FILE_COUNT=${METADATA_FILE_COUNT}" \
+            >> "$GITHUB_ENV"
+
+          echo "Successful retrieves: ${SUCCESS_COUNT}"
+          echo "Failed retrieves: ${FAILED_COUNT}"
+          echo "Metadata files: ${METADATA_FILE_COUNT}"
+
+      # ============================================================
+      # 8. 根据实际下载文件生成准确的 Manifest
+      # ============================================================
+      - name: Generate retrieved Metadata manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$SNAPSHOT_DIR"
+
+          mkdir -p retrieved-manifest
+
+          sf project generate manifest \
+            --source-dir force-app \
+            --output-dir retrieved-manifest \
+            --type package
+
+          if [ ! -s "retrieved-manifest/package.xml" ]; then
+            echo "::error::无法根据下载结果生成 Manifest。"
+            exit 1
+          fi
+
+          mv \
+            retrieved-manifest/package.xml \
+            manifest/retrieved-package.xml
+
+          rmdir retrieved-manifest
+
+      # ============================================================
+      # 9. 生成只包含 Metadata 名称的清单
+      # ============================================================
+      - name: Generate Metadata name list
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$SNAPSHOT_DIR"
+
+          read -r METADATA_NAME_COUNT METADATA_TYPE_COUNT < <(
+            python3 <<'PYTHON'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          namespace = {
+              "m": "http://soap.sforce.com/2006/04/metadata"
+          }
+
+          manifest_file = Path(
+              "manifest/retrieved-package.xml"
+          )
+
+          tree = ET.parse(manifest_file)
+          root = tree.getroot()
+
+          metadata_names = set()
+          metadata_types = set()
+
+          for type_element in root.findall("m:types", namespace):
+              type_name_element = type_element.find(
+                  "m:name",
+                  namespace,
+              )
+
+              if (
+                  type_name_element is not None
+                  and type_name_element.text
+              ):
+                  metadata_types.add(
+                      type_name_element.text.strip()
+                  )
+
+              for member_element in type_element.findall(
+                  "m:members",
+                  namespace,
+              ):
+                  if member_element.text:
+                      metadata_names.add(
+                          member_element.text.strip()
+                      )
+
+          sorted_names = sorted(
+              metadata_names,
+              key=str.casefold,
+          )
+
+          output_file = Path("METADATA_LIST.txt")
+
+          output_text = "\n".join(sorted_names)
+
+          if output_text:
+              output_text += "\n"
+
+          output_file.write_text(
+              output_text,
+              encoding="utf-8",
+          )
+
+          print(
+              len(metadata_names),
+              len(metadata_types),
+          )
+          PYTHON
+          )
+
+          if [ ! -s "METADATA_LIST.txt" ]; then
+            echo "::error::Metadata 清单为空。"
+            exit 1
+          fi
+
+          echo "METADATA_NAME_COUNT=${METADATA_NAME_COUNT}" \
+            >> "$GITHUB_ENV"
+
+          echo "METADATA_TYPE_COUNT=${METADATA_TYPE_COUNT}" \
+            >> "$GITHUB_ENV"
+
+          echo "Metadata name count: ${METADATA_NAME_COUNT}"
+          echo "Metadata type count: ${METADATA_TYPE_COUNT}"
+
+      # ============================================================
+      # 10. 生成快照说明
+      # ============================================================
+      - name: Generate snapshot information
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # 使用中国标准时间
+          GENERATED_AT="$(date +'%Y-%m-%d %H:%M:%S %Z')"
+
+          cat > "$SNAPSHOT_DIR/SNAPSHOT_INFO.md" <<EOF
+          # Salesforce Metadata Snapshot
+
+          - Environment: DEV
+          - Query scope: ${SCOPE_LABEL}
+          - Query value: ${QUERY_SCOPE}
+          - Snapshot date: ${TODAY}
+          - Generated at: ${GENERATED_AT}
+          - Timezone: Asia/Shanghai
+          - Source format: Salesforce DX Source Format
+          - Metadata type count: ${METADATA_TYPE_COUNT}
+          - Metadata name count: ${METADATA_NAME_COUNT}
+          - Metadata file count: ${METADATA_FILE_COUNT}
+          - Successful retrieve batches: ${SUCCESSFUL_RETRIEVE_COUNT}
+          - Failed retrieve batches: ${FAILED_RETRIEVE_COUNT}
+
+          ## Metadata list
+
+          Metadata names are stored in:
+
+          \`\`\`text
+          METADATA_LIST.txt
+          \`\`\`
+
+          The list contains Metadata names only and does not contain
+          Metadata XML content or configuration values.
+          EOF
+
+      # ============================================================
+      # 11. 删除临时拆分 Manifest
+      # ============================================================
+      - name: Remove temporary retrieve manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf "$SNAPSHOT_DIR/retrieve-manifests"
+
+      # ============================================================
+      # 12. 输出 GitHub Actions Summary
+      # ============================================================
+      - name: Write workflow summary
+        shell: bash
+        run: |
+          {
+            echo "## Salesforce Metadata Query"
+            echo ""
+            echo "| 项目 | 结果 |"
+            echo "|---|---|"
+            echo "| 环境 | DEV |"
+            echo "| 时区 | Asia/Shanghai |"
+            echo "| 查询范围 | ${SCOPE_LABEL} |"
+            echo "| 快照目录 | \`${SNAPSHOT_DIR}\` |"
+            echo "| Metadata 类型数 | ${METADATA_TYPE_COUNT} |"
+            echo "| Metadata 名称数 | ${METADATA_NAME_COUNT} |"
+            echo "| Metadata 文件数 | ${METADATA_FILE_COUNT} |"
+            echo "| 成功批次 | ${SUCCESSFUL_RETRIEVE_COUNT} |"
+            echo "| 失败批次 | ${FAILED_RETRIEVE_COUNT} |"
+            echo "| 清单文件 | \`${SNAPSHOT_DIR}/METADATA_LIST.txt\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ============================================================
+      # 13. 提交查询结果
+      # ============================================================
+      - name: Commit Metadata snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+
+          git config \
+            user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "$DATE_ROOT"
+
+          if git diff --cached --quiet; then
+            echo "Metadata 查询结果没有变化，无需提交。"
+            exit 0
+          fi
+
+          git commit \
+            -m "chore(metadata): query ${QUERY_SCOPE} DEV ${TODAY}"
+
+          git pull --rebase origin main
+
+          git push origin HEAD:main
+
+          echo "Metadata snapshot committed successfully."
+
+      # ============================================================
+      # 14. 验证 Retrieve 结果
+      # ============================================================
+      - name: Validate retrieve result
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$FAILED_RETRIEVE_COUNT" -gt 0 ]; then
+            echo "::error::存在 ${FAILED_RETRIEVE_COUNT} 个 Retrieve 批次失败。"
+            echo "已成功下载的 Metadata 和失败清单仍已提交。"
+            exit 1
+          fi
+
+          echo "All Metadata retrieve batches completed successfully."
