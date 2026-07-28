@@ -3,14 +3,24 @@ name: Salesforce Metadata Query
 on:
   workflow_dispatch:
     inputs:
+      query:
+        description: 自然语言查询，例如：查询org中的所有metadata；查询org中的所有对象metadata
+        required: false
+        default: ""
+        type: string
       scope:
-        description: Metadata 查询范围
-        required: true
+        description: Metadata 查询范围；填写 query 时会自动推断并覆盖该值
+        required: false
         default: all
         type: choice
         options:
           - all
           - objects
+      environment_name:
+        description: 快照目录中的环境名称
+        required: false
+        default: DEV
+        type: string
 
 permissions:
   contents: write
@@ -120,16 +130,99 @@ jobs:
       # ============================================================
       - name: Prepare SFDX snapshot project
         shell: bash
+        env:
+          RAW_QUERY: ${{ inputs.query }}
+          REQUESTED_SCOPE: ${{ inputs.scope }}
+          RAW_ENVIRONMENT_NAME: ${{ inputs.environment_name }}
         run: |
           set -euo pipefail
 
-          QUERY_SCOPE="${{ inputs.scope }}"
+          read -r QUERY_SCOPE QUERY_SOURCE < <(
+            python3 <<'PYTHON'
+          import os
+          import sys
+
+          raw_query = os.environ.get("RAW_QUERY", "").strip()
+          requested_scope = os.environ.get(
+              "REQUESTED_SCOPE",
+              "",
+          ).strip()
+
+          def infer_scope(query):
+              normalized = query.casefold()
+
+              object_keywords = (
+                  "对象",
+                  "object",
+                  "objects",
+                  "sobject",
+                  "sobjects",
+              )
+
+              all_keywords = (
+                  "所有",
+                  "全部",
+                  "全量",
+                  "完整",
+                  "all",
+                  "metadata",
+                  "metedata",
+              )
+
+              if any(keyword in normalized for keyword in object_keywords):
+                  return "objects"
+
+              if any(keyword in normalized for keyword in all_keywords):
+                  return "all"
+
+              return ""
+
+          if raw_query:
+              scope = infer_scope(raw_query)
+
+              if not scope:
+                  print(
+                      "::error::无法识别自然语言查询。"
+                      "示例：查询org中的所有metadata；"
+                      "查询org中的所有对象metadata",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+
+              print(scope, "natural-language")
+          elif requested_scope in {"all", "objects"}:
+              print(requested_scope, "scope-input")
+          else:
+              print(
+                  f"::error::不支持的查询范围：{requested_scope}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          PYTHON
+          )
+
+          ENVIRONMENT_NAME="$(
+            python3 <<'PYTHON'
+          import os
+          import re
+
+          raw_environment = os.environ.get(
+              "RAW_ENVIRONMENT_NAME",
+              "",
+          ).strip()
+
+          environment = raw_environment or "DEV"
+          environment = re.sub(r"[^A-Za-z0-9_-]+", "-", environment)
+          environment = environment.strip("-_") or "DEV"
+
+          print(environment.upper())
+          PYTHON
+          )"
 
           # TZ 已设置为 Asia/Shanghai
           TODAY="$(date +'%Y%m%d')"
 
-          # 环境固定为 DEV，直接写入目录名称
-          DATE_ROOT="${SNAPSHOT_ROOT}/${TODAY}-DEV"
+          DATE_ROOT="${SNAPSHOT_ROOT}/${TODAY}-${ENVIRONMENT_NAME}"
 
           case "$QUERY_SCOPE" in
             all)
@@ -177,8 +270,11 @@ jobs:
           GITIGNORE
 
           echo "QUERY_SCOPE=${QUERY_SCOPE}" >> "$GITHUB_ENV"
+          echo "QUERY_SOURCE=${QUERY_SOURCE}" >> "$GITHUB_ENV"
           echo "SCOPE_LABEL=${SCOPE_LABEL}" >> "$GITHUB_ENV"
           echo "SCOPE_DIRECTORY=${SCOPE_DIRECTORY}" >> "$GITHUB_ENV"
+          echo "QUERY_TEXT=${RAW_QUERY}" >> "$GITHUB_ENV"
+          echo "ENVIRONMENT_NAME=${ENVIRONMENT_NAME}" >> "$GITHUB_ENV"
           echo "TODAY=${TODAY}" >> "$GITHUB_ENV"
           echo "DATE_ROOT=${DATE_ROOT}" >> "$GITHUB_ENV"
           echo "SNAPSHOT_DIR=${SNAPSHOT_DIR}" >> "$GITHUB_ENV"
@@ -628,9 +724,11 @@ jobs:
           cat > "$SNAPSHOT_DIR/SNAPSHOT_INFO.md" <<EOF
           # Salesforce Metadata Snapshot
 
-          - Environment: DEV
+          - Environment: ${ENVIRONMENT_NAME}
           - Query scope: ${SCOPE_LABEL}
           - Query value: ${QUERY_SCOPE}
+          - Query source: ${QUERY_SOURCE}
+          - Natural language query: ${QUERY_TEXT}
           - Snapshot date: ${TODAY}
           - Generated at: ${GENERATED_AT}
           - Timezone: Asia/Shanghai
@@ -674,9 +772,11 @@ jobs:
             echo ""
             echo "| 项目 | 结果 |"
             echo "|---|---|"
-            echo "| 环境 | DEV |"
+            echo "| 环境 | ${ENVIRONMENT_NAME} |"
             echo "| 时区 | Asia/Shanghai |"
             echo "| 查询范围 | ${SCOPE_LABEL} |"
+            echo "| 查询来源 | ${QUERY_SOURCE} |"
+            echo "| 自然语言查询 | ${QUERY_TEXT} |"
             echo "| 快照目录 | \`${SNAPSHOT_DIR}\` |"
             echo "| Metadata 类型数 | ${METADATA_TYPE_COUNT} |"
             echo "| Metadata 名称数 | ${METADATA_NAME_COUNT} |"
