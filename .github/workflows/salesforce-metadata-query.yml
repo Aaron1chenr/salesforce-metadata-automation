@@ -1,6 +1,10 @@
 name: Salesforce Metadata Query
 
 on:
+  repository_dispatch:
+    types:
+      - cursor-ask-metadata-query
+
   workflow_dispatch:
     inputs:
       query:
@@ -131,9 +135,9 @@ jobs:
       - name: Prepare SFDX snapshot project
         shell: bash
         env:
-          RAW_QUERY: ${{ inputs.query }}
-          REQUESTED_SCOPE: ${{ inputs.scope }}
-          RAW_ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          RAW_QUERY: ${{ github.event_name == 'repository_dispatch' && (github.event.client_payload.query || '查询org中的所有metadata') || inputs.query || '' }}
+          REQUESTED_SCOPE: ${{ github.event_name == 'repository_dispatch' && (github.event.client_payload.scope || 'all') || inputs.scope || 'all' }}
+          RAW_ENVIRONMENT_NAME: ${{ github.event_name == 'repository_dispatch' && (github.event.client_payload.environment_name || 'DEV') || inputs.environment_name || 'DEV' }}
         run: |
           set -euo pipefail
 
@@ -273,7 +277,11 @@ jobs:
           echo "QUERY_SOURCE=${QUERY_SOURCE}" >> "$GITHUB_ENV"
           echo "SCOPE_LABEL=${SCOPE_LABEL}" >> "$GITHUB_ENV"
           echo "SCOPE_DIRECTORY=${SCOPE_DIRECTORY}" >> "$GITHUB_ENV"
-          echo "QUERY_TEXT=${RAW_QUERY}" >> "$GITHUB_ENV"
+          {
+            echo "QUERY_TEXT<<EOF"
+            printf '%s\n' "$RAW_QUERY"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
           echo "ENVIRONMENT_NAME=${ENVIRONMENT_NAME}" >> "$GITHUB_ENV"
           echo "TODAY=${TODAY}" >> "$GITHUB_ENV"
           echo "DATE_ROOT=${DATE_ROOT}" >> "$GITHUB_ENV"
@@ -808,7 +816,7 @@ jobs:
           fi
 
           git commit \
-            -m "chore(metadata): query ${QUERY_SCOPE} DEV ${TODAY}"
+            -m "chore(metadata): query ${QUERY_SCOPE} ${ENVIRONMENT_NAME} ${TODAY}"
 
           git pull --rebase origin main
 
