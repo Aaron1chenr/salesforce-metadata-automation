@@ -159,6 +159,16 @@ jobs:
 
           echo "Snapshot directory: ${SNAPSHOT_DIR}"
 
+      - name: Configure default org for snapshot project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$SNAPSHOT_DIR"
+
+          sf config set "target-org=${ORG_USERNAME}"
+          sf config get target-org
+
       - name: Generate object metadata manifest
         shell: bash
         run: |
