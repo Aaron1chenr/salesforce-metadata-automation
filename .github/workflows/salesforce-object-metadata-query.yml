@@ -330,7 +330,7 @@ jobs:
 
           This snapshot was retrieved from the org identified by
           DEV_SFDX_AUTH_URL. The retrieve command does not specify a
-          hard-coded --target-org value.
+          hard-coded target org parameter.
           EOF
 
       - name: Write workflow summary
