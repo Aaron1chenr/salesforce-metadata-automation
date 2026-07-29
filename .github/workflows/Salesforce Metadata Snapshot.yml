@@ -1,0 +1,761 @@
+name: Salesforce Metadata Snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      metadata_types:
+        description: "可选。多个 Metadata 类型使用英文逗号分隔；留空默认查询全部可访问 Metadata"
+        required: false
+        default: ""
+        type: string
+
+      environment_name:
+        description: "可选。留空时根据 DEV_SFDX_AUTH_URL 对应 Org 的地址自动识别"
+        required: false
+        default: ""
+        type: string
+
+  repository_dispatch:
+    types:
+      - cursor-salesforce-metadata-snapshot
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: salesforce-metadata-snapshot-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  retrieve-salesforce-metadata:
+    name: Retrieve Salesforce Metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      SNAPSHOT_ROOT: salesforce-metadata-snapshots
+
+      REQUESTED_METADATA_TYPES: >-
+        ${{ inputs.metadata_types ||
+            github.event.client_payload.metadata_types ||
+            '' }}
+
+      REQUESTED_ENVIRONMENT_NAME: >-
+        ${{ inputs.environment_name ||
+            github.event.client_payload.environment_name ||
+            '' }}
+
+      # 降低生成全量 Manifest 时的并发请求数。
+      # 如果 Org 较大或发生超时，可以进一步调低。
+      SF_LIST_METADATA_BATCH_SIZE: "5"
+
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install Salesforce CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npm install --global @salesforce/cli
+
+          echo "Salesforce CLI version:"
+          sf --version
+
+      - name: Authenticate Org from DEV_SFDX_AUTH_URL
+        id: salesforce_auth
+        shell: bash
+        env:
+          SALESFORCE_AUTH_URL: ${{ secrets.DEV_SFDX_AUTH_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SALESFORCE_AUTH_URL:-}" ]; then
+            echo "::error::GitHub Secret DEV_SFDX_AUTH_URL 未配置或为空。"
+            exit 1
+          fi
+
+          AUTH_FILE="${RUNNER_TEMP}/dev-sfdx-auth-url.txt"
+          AUTH_RESULT="${RUNNER_TEMP}/salesforce-auth-result.json"
+          ORG_DISPLAY="${RUNNER_TEMP}/salesforce-org-display.json"
+
+          AUTH_ALIAS="metadata-snapshot-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          umask 077
+          printf '%s' "${SALESFORCE_AUTH_URL}" > "${AUTH_FILE}"
+
+          set +e
+
+          sf org login sfdx-url \
+            --sfdx-url-file "${AUTH_FILE}" \
+            --alias "${AUTH_ALIAS}" \
+            --json \
+            > "${AUTH_RESULT}"
+
+          AUTH_EXIT_CODE=$?
+
+          set -e
+
+          if [ "${AUTH_EXIT_CODE}" -ne 0 ]; then
+            AUTH_ERROR="$(
+              jq -r \
+                '.message // .name // "Salesforce Org 登录失败。"' \
+                "${AUTH_RESULT}" 2>/dev/null || true
+            )"
+
+            echo "::error::${AUTH_ERROR}"
+
+            rm -f \
+              "${AUTH_FILE}" \
+              "${AUTH_RESULT}" \
+              "${ORG_DISPLAY}"
+
+            exit "${AUTH_EXIT_CODE}"
+          fi
+
+          ORG_USERNAME="$(
+            jq -r '.result.username // empty' "${AUTH_RESULT}"
+          )"
+
+          if [ -z "${ORG_USERNAME}" ]; then
+            echo "::error::已读取 DEV_SFDX_AUTH_URL，但未能识别对应 Org Username。"
+
+            rm -f \
+              "${AUTH_FILE}" \
+              "${AUTH_RESULT}" \
+              "${ORG_DISPLAY}"
+
+            exit 1
+          fi
+
+          # 不使用 --set-default。
+          # 将 DEV_SFDX_AUTH_URL 登录后识别到的真实 Username
+          # 设置为当前 GitHub Actions Job 的目标 Org。
+          export SF_TARGET_ORG="${ORG_USERNAME}"
+
+          sf org display \
+            --target-org "${ORG_USERNAME}" \
+            --json \
+            > "${ORG_DISPLAY}"
+
+          ORG_ID="$(
+            jq -r \
+              '.result.id // .result.orgId // empty' \
+              "${ORG_DISPLAY}"
+          )"
+
+          INSTANCE_URL="$(
+            jq -r \
+              '.result.instanceUrl // empty' \
+              "${ORG_DISPLAY}"
+          )"
+
+          ORG_STATUS="$(
+            jq -r \
+              '.result.connectedStatus // "Unknown"' \
+              "${ORG_DISPLAY}"
+          )"
+
+          if [ -z "${ORG_ID}" ] || [ -z "${INSTANCE_URL}" ]; then
+            echo "::error::无法从 DEV_SFDX_AUTH_URL 对应 Org 中识别 Org ID 或 Instance URL。"
+
+            rm -f \
+              "${AUTH_FILE}" \
+              "${AUTH_RESULT}" \
+              "${ORG_DISPLAY}"
+
+            exit 1
+          fi
+
+          echo "SF_TARGET_ORG=${ORG_USERNAME}" >> "${GITHUB_ENV}"
+          echo "SALESFORCE_ORG_USERNAME=${ORG_USERNAME}" >> "${GITHUB_ENV}"
+          echo "SALESFORCE_ORG_ID=${ORG_ID}" >> "${GITHUB_ENV}"
+          echo "SALESFORCE_INSTANCE_URL=${INSTANCE_URL}" >> "${GITHUB_ENV}"
+          echo "SALESFORCE_ORG_STATUS=${ORG_STATUS}" >> "${GITHUB_ENV}"
+          echo "SALESFORCE_AUTH_ALIAS=${AUTH_ALIAS}" >> "${GITHUB_ENV}"
+
+          echo "org_id=${ORG_ID}" >> "${GITHUB_OUTPUT}"
+          echo "instance_url=${INSTANCE_URL}" >> "${GITHUB_OUTPUT}"
+          echo "username=${ORG_USERNAME}" >> "${GITHUB_OUTPUT}"
+
+          rm -f \
+            "${AUTH_FILE}" \
+            "${AUTH_RESULT}" \
+            "${ORG_DISPLAY}"
+
+          echo "Salesforce Org 识别成功。"
+          echo "Org ID: ${ORG_ID}"
+          echo "Instance URL: ${INSTANCE_URL}"
+          echo "Connected Status: ${ORG_STATUS}"
+
+      - name: Resolve environment and snapshot directory
+        id: snapshot_context
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TODAY="$(
+            TZ=Asia/Singapore date '+%Y-%m-%d'
+          )"
+
+          INSTANCE_URL="${SALESFORCE_INSTANCE_URL}"
+          ENVIRONMENT_OVERRIDE="${REQUESTED_ENVIRONMENT_NAME}"
+
+          HOST="${INSTANCE_URL#http://}"
+          HOST="${HOST#https://}"
+          HOST="${HOST%%/*}"
+
+          RAW_ENVIRONMENT=""
+
+          if [ -n "${ENVIRONMENT_OVERRIDE}" ]; then
+            RAW_ENVIRONMENT="${ENVIRONMENT_OVERRIDE}"
+
+          elif [[ "${HOST}" == *".sandbox."* ]]; then
+            DOMAIN_PREFIX="${HOST%%.*}"
+
+            if [[ "${DOMAIN_PREFIX}" == *"--"* ]]; then
+              RAW_ENVIRONMENT="${DOMAIN_PREFIX##*--}"
+            else
+              RAW_ENVIRONMENT="SANDBOX"
+            fi
+
+          elif [[ "${HOST}" == *".scratch."* ]]; then
+            RAW_ENVIRONMENT="SCRATCH"
+
+          else
+            RAW_ENVIRONMENT="PROD"
+          fi
+
+          ENVIRONMENT_NAME="$(
+            printf '%s' "${RAW_ENVIRONMENT}" |
+              tr '[:lower:]' '[:upper:]' |
+              sed -E \
+                -e 's/[^A-Z0-9._-]+/-/g' \
+                -e 's/^-+//' \
+                -e 's/-+$//'
+          )"
+
+          if [ -z "${ENVIRONMENT_NAME}" ]; then
+            echo "::error::无法生成有效的环境名称。"
+            exit 1
+          fi
+
+          PROJECT_NAME="${TODAY}_${ENVIRONMENT_NAME}"
+          SNAPSHOT_DIR="${SNAPSHOT_ROOT}/${PROJECT_NAME}"
+
+          BRANCH_ENVIRONMENT="$(
+            printf '%s' "${ENVIRONMENT_NAME}" |
+              tr '[:upper:]' '[:lower:]'
+          )"
+
+          BRANCH_NAME="cursor/metadata-snapshot-${TODAY}-${BRANCH_ENVIRONMENT}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          echo "snapshot_date=${TODAY}" >> "${GITHUB_OUTPUT}"
+          echo "environment_name=${ENVIRONMENT_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "project_name=${PROJECT_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "snapshot_dir=${SNAPSHOT_DIR}" >> "${GITHUB_OUTPUT}"
+          echo "branch_name=${BRANCH_NAME}" >> "${GITHUB_OUTPUT}"
+
+          echo "SNAPSHOT_DATE=${TODAY}" >> "${GITHUB_ENV}"
+          echo "ENVIRONMENT_NAME=${ENVIRONMENT_NAME}" >> "${GITHUB_ENV}"
+          echo "PROJECT_NAME=${PROJECT_NAME}" >> "${GITHUB_ENV}"
+          echo "SNAPSHOT_DIR=${SNAPSHOT_DIR}" >> "${GITHUB_ENV}"
+          echo "SNAPSHOT_BRANCH=${BRANCH_NAME}" >> "${GITHUB_ENV}"
+
+          echo "Environment: ${ENVIRONMENT_NAME}"
+          echo "Snapshot directory: ${SNAPSHOT_DIR}"
+          echo "Branch: ${BRANCH_NAME}"
+
+      - name: Generate independent SFDX project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf "${SNAPSHOT_DIR}"
+          mkdir -p "${SNAPSHOT_ROOT}"
+
+          sf project generate \
+            --name "${PROJECT_NAME}" \
+            --output-dir "${SNAPSHOT_ROOT}"
+
+          if [ ! -f "${SNAPSHOT_DIR}/sfdx-project.json" ]; then
+            echo "::error::SFDX 项目生成失败，未找到 sfdx-project.json。"
+            exit 1
+          fi
+
+          mkdir -p \
+            "${SNAPSHOT_DIR}/manifest" \
+            "${SNAPSHOT_DIR}/force-app/main/default"
+
+      - name: Generate package.xml from identified Org
+        id: manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MANIFEST_RESULT="${RUNNER_TEMP}/manifest-generation-result.json"
+
+          RAW_METADATA_TYPES="$(
+            printf '%s' "${REQUESTED_METADATA_TYPES:-}" |
+              tr -d '\r\n'
+          )"
+
+          cd "${SNAPSHOT_DIR}"
+
+          MANIFEST_COMMAND=(
+            sf project generate manifest
+            --from-org "${SF_TARGET_ORG}"
+            --output-dir "manifest"
+            --type package
+            --json
+          )
+
+          if [ -z "${RAW_METADATA_TYPES}" ]; then
+            # metadata_types 未填写：
+            # 自动发现 DEV_SFDX_AUTH_URL 对应 Org 中全部可访问 Metadata。
+            METADATA_SCOPE="ALL_DISCOVERABLE_METADATA"
+            METADATA_MODE="ALL"
+
+            echo "metadata_types 未填写。"
+            echo "开始扫描当前 Org 中全部可访问 Metadata。"
+
+          else
+            # metadata_types 已填写：
+            # 仅查询用户指定的 Metadata 类型。
+            IFS=',' read -r -a METADATA_TYPE_ARRAY <<< "${RAW_METADATA_TYPES}"
+
+            NORMALIZED_TYPES=()
+
+            for RAW_TYPE in "${METADATA_TYPE_ARRAY[@]}"; do
+              METADATA_TYPE="$(
+                printf '%s' "${RAW_TYPE}" |
+                  xargs
+              )"
+
+              if [ -z "${METADATA_TYPE}" ]; then
+                continue
+              fi
+
+              if [[ ! "${METADATA_TYPE}" =~ ^[A-Za-z][A-Za-z0-9_]*$ ]]; then
+                echo "::error::无效的 Metadata 类型：${METADATA_TYPE}"
+                exit 1
+              fi
+
+              NORMALIZED_TYPES+=("${METADATA_TYPE}")
+              MANIFEST_COMMAND+=(--metadata "${METADATA_TYPE}")
+            done
+
+            if [ "${#NORMALIZED_TYPES[@]}" -eq 0 ]; then
+              echo "::error::metadata_types 已填写，但没有识别到有效 Metadata 类型。"
+              exit 1
+            fi
+
+            METADATA_SCOPE="$(
+              IFS=','
+              echo "${NORMALIZED_TYPES[*]}"
+            )"
+
+            METADATA_MODE="SELECTED"
+
+            echo "仅扫描指定 Metadata 类型：${METADATA_SCOPE}"
+          fi
+
+          set +e
+
+          "${MANIFEST_COMMAND[@]}" > "${MANIFEST_RESULT}"
+
+          MANIFEST_EXIT_CODE=$?
+
+          set -e
+
+          if [ "${MANIFEST_EXIT_CODE}" -ne 0 ]; then
+            MANIFEST_ERROR="$(
+              jq -r \
+                '.message //
+                 .result.message //
+                 .name //
+                 "生成 Salesforce Metadata Manifest 失败。"' \
+                "${MANIFEST_RESULT}" 2>/dev/null || true
+            )"
+
+            echo "::error::${MANIFEST_ERROR}"
+            rm -f "${MANIFEST_RESULT}"
+            exit "${MANIFEST_EXIT_CODE}"
+          fi
+
+          PACKAGE_XML="manifest/package.xml"
+
+          if [ ! -f "${PACKAGE_XML}" ]; then
+            echo "::error::Manifest 命令执行完成，但未生成 manifest/package.xml。"
+
+            if [ -f "${MANIFEST_RESULT}" ]; then
+              cat "${MANIFEST_RESULT}"
+            fi
+
+            rm -f "${MANIFEST_RESULT}"
+            exit 1
+          fi
+
+          TYPE_COUNT="$(
+            grep -c '<name>' "${PACKAGE_XML}" || true
+          )"
+
+          MEMBER_COUNT="$(
+            grep -c '<members>' "${PACKAGE_XML}" || true
+          )"
+
+          if [ "${TYPE_COUNT}" -eq 0 ]; then
+            echo "::error::生成的 package.xml 中没有 Metadata 类型。"
+            rm -f "${MANIFEST_RESULT}"
+            exit 1
+          fi
+
+          echo "metadata_mode=${METADATA_MODE}" >> "${GITHUB_OUTPUT}"
+          echo "metadata_scope=${METADATA_SCOPE}" >> "${GITHUB_OUTPUT}"
+          echo "metadata_type_count=${TYPE_COUNT}" >> "${GITHUB_OUTPUT}"
+          echo "metadata_member_count=${MEMBER_COUNT}" >> "${GITHUB_OUTPUT}"
+
+          echo "METADATA_MODE=${METADATA_MODE}" >> "${GITHUB_ENV}"
+          echo "METADATA_SCOPE=${METADATA_SCOPE}" >> "${GITHUB_ENV}"
+          echo "METADATA_TYPE_COUNT=${TYPE_COUNT}" >> "${GITHUB_ENV}"
+          echo "METADATA_MEMBER_COUNT=${MEMBER_COUNT}" >> "${GITHUB_ENV}"
+
+          echo "Manifest generation completed."
+          echo "Metadata mode: ${METADATA_MODE}"
+          echo "Metadata scope: ${METADATA_SCOPE}"
+          echo "Metadata type count: ${TYPE_COUNT}"
+          echo "Metadata member count: ${MEMBER_COUNT}"
+
+          rm -f "${MANIFEST_RESULT}"
+
+      - name: Retrieve metadata from identified Org
+        id: retrieve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RETRIEVE_RESULT="${RUNNER_TEMP}/salesforce-retrieve-result.json"
+
+          cd "${SNAPSHOT_DIR}"
+
+          # 不写死 --target-org。
+          # Salesforce CLI 使用登录步骤动态设置的 SF_TARGET_ORG。
+          set +e
+
+          sf project retrieve start \
+            --manifest "manifest/package.xml" \
+            --wait 120 \
+            --ignore-conflicts \
+            --json \
+            > "${RETRIEVE_RESULT}"
+
+          RETRIEVE_EXIT_CODE=$?
+
+          set -e
+
+          if [ "${RETRIEVE_EXIT_CODE}" -ne 0 ]; then
+            RETRIEVE_ERROR="$(
+              jq -r \
+                '.message //
+                 .result.errorMessage //
+                 .result.details.componentFailures[0].problem //
+                 .name //
+                 "Salesforce Metadata 查询失败。"' \
+                "${RETRIEVE_RESULT}" 2>/dev/null || true
+            )"
+
+            echo "::error::${RETRIEVE_ERROR}"
+
+            if [ -f "${RETRIEVE_RESULT}" ]; then
+              echo "Retrieve result:"
+              jq \
+                'del(
+                  .result.accessToken,
+                  .result.sfdxAuthUrl,
+                  .result.refreshToken
+                )' \
+                "${RETRIEVE_RESULT}" 2>/dev/null || true
+            fi
+
+            rm -f "${RETRIEVE_RESULT}"
+            exit "${RETRIEVE_EXIT_CODE}"
+          fi
+
+          FILE_COUNT="$(
+            jq -r \
+              '(
+                .result.files //
+                .result.fileResponses //
+                []
+              ) | length' \
+              "${RETRIEVE_RESULT}"
+          )"
+
+          OBJECT_COUNT="0"
+
+          if [ -d "force-app/main/default/objects" ]; then
+            OBJECT_COUNT="$(
+              find "force-app/main/default/objects" \
+                -mindepth 1 \
+                -maxdepth 1 \
+                -type d |
+                wc -l |
+                xargs
+            )"
+          fi
+
+          SOURCE_FILE_COUNT="$(
+            find "force-app/main/default" \
+              -type f |
+              wc -l |
+              xargs
+          )"
+
+          echo "file_count=${FILE_COUNT}" >> "${GITHUB_OUTPUT}"
+          echo "source_file_count=${SOURCE_FILE_COUNT}" >> "${GITHUB_OUTPUT}"
+          echo "object_count=${OBJECT_COUNT}" >> "${GITHUB_OUTPUT}"
+
+          echo "Metadata retrieve completed."
+          echo "Retrieved result files: ${FILE_COUNT}"
+          echo "Retrieved source files: ${SOURCE_FILE_COUNT}"
+          echo "Retrieved object directories: ${OBJECT_COUNT}"
+
+          rm -f "${RETRIEVE_RESULT}"
+
+      - name: Generate snapshot information
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RETRIEVED_AT="$(
+            TZ=Asia/Singapore date --iso-8601=seconds
+          )"
+
+          jq -n \
+            --arg snapshotDate "${SNAPSHOT_DATE}" \
+            --arg environmentName "${ENVIRONMENT_NAME}" \
+            --arg orgId "${SALESFORCE_ORG_ID}" \
+            --arg instanceUrl "${SALESFORCE_INSTANCE_URL}" \
+            --arg retrievedAt "${RETRIEVED_AT}" \
+            --arg metadataMode "${METADATA_MODE}" \
+            --arg metadataScope "${METADATA_SCOPE}" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg workflowRunId "${GITHUB_RUN_ID}" \
+            --arg workflowRunAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg triggeredBy "${GITHUB_ACTOR}" \
+            --argjson metadataTypeCount "${METADATA_TYPE_COUNT}" \
+            --argjson metadataMemberCount "${METADATA_MEMBER_COUNT}" \
+            --argjson retrievedFileCount "${{ steps.retrieve.outputs.file_count }}" \
+            --argjson retrievedSourceFileCount "${{ steps.retrieve.outputs.source_file_count }}" \
+            --argjson retrievedObjectCount "${{ steps.retrieve.outputs.object_count }}" \
+            '{
+              snapshotDate: $snapshotDate,
+              environmentName: $environmentName,
+              salesforceOrgId: $orgId,
+              instanceUrl: $instanceUrl,
+              retrievedAt: $retrievedAt,
+              metadataSelection: {
+                mode: $metadataMode,
+                scope: $metadataScope,
+                discoveredTypeCount: $metadataTypeCount,
+                discoveredMemberCount: $metadataMemberCount
+              },
+              retrievalResult: {
+                retrievedFileCount: $retrievedFileCount,
+                retrievedSourceFileCount: $retrievedSourceFileCount,
+                retrievedObjectCount: $retrievedObjectCount
+              },
+              source: {
+                repository: $repository,
+                workflowRunId: $workflowRunId,
+                workflowRunAttempt: $workflowRunAttempt,
+                triggeredBy: $triggeredBy
+              }
+            }' \
+            > "${SNAPSHOT_DIR}/snapshot-info.json"
+
+      - name: Verify snapshot structure
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REQUIRED_FILES=(
+            "${SNAPSHOT_DIR}/sfdx-project.json"
+            "${SNAPSHOT_DIR}/manifest/package.xml"
+            "${SNAPSHOT_DIR}/snapshot-info.json"
+          )
+
+          for REQUIRED_FILE in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "${REQUIRED_FILE}" ]; then
+              echo "::error::缺少必要文件：${REQUIRED_FILE}"
+              exit 1
+            fi
+          done
+
+          if [ ! -d "${SNAPSHOT_DIR}/force-app/main/default" ]; then
+            echo "::error::缺少 SFDX source 目录：force-app/main/default"
+            exit 1
+          fi
+
+          PACKAGE_TYPE_COUNT="$(
+            grep -c '<name>' \
+              "${SNAPSHOT_DIR}/manifest/package.xml" || true
+          )"
+
+          if [ "${PACKAGE_TYPE_COUNT}" -eq 0 ]; then
+            echo "::error::package.xml 不包含任何 Metadata 类型。"
+            exit 1
+          fi
+
+          echo "Snapshot project structure:"
+
+          find "${SNAPSHOT_DIR}" \
+            -maxdepth 5 \
+            -type f \
+            | sort \
+            | head -300
+
+      - name: Upload metadata snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: salesforce-metadata-${{ steps.snapshot_context.outputs.snapshot_date }}-${{ steps.snapshot_context.outputs.environment_name }}
+          path: ${{ steps.snapshot_context.outputs.snapshot_dir }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create snapshot branch and commit
+        id: git_commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config \
+            user.name \
+            "github-actions[bot]"
+
+          git config \
+            user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git switch -c "${SNAPSHOT_BRANCH}"
+
+          git add "${SNAPSHOT_DIR}"
+
+          if git diff --cached --quiet; then
+            echo "::notice::本次查询未产生文件变化，不创建 Pull Request。"
+            echo "has_changes=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          git commit \
+            -m "chore: snapshot ${ENVIRONMENT_NAME} metadata ${SNAPSHOT_DATE}"
+
+          git push \
+            --set-upstream \
+            origin \
+            "${SNAPSHOT_BRANCH}"
+
+          echo "has_changes=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Create normal Pull Request
+        if: steps.git_commit.outputs.has_changes == 'true'
+        id: create_pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          PR_BODY="${RUNNER_TEMP}/metadata-snapshot-pr.md"
+
+          cat > "${PR_BODY}" <<EOF
+          ## Salesforce Metadata Snapshot
+
+          本 Pull Request 由 GitHub Actions 自动创建。
+
+          ### 查询来源
+
+          - Environment: ${ENVIRONMENT_NAME}
+          - Salesforce Org ID: ${SALESFORCE_ORG_ID}
+          - Instance URL: ${SALESFORCE_INSTANCE_URL}
+          - Metadata Mode: ${METADATA_MODE}
+          - Metadata Scope: ${METADATA_SCOPE}
+          - Discovered Metadata Types: ${METADATA_TYPE_COUNT}
+          - Discovered Metadata Members: ${METADATA_MEMBER_COUNT}
+          - Snapshot Date: ${SNAPSHOT_DATE}
+
+          ### 保存位置
+
+          \`${SNAPSHOT_DIR}\`
+
+          ### 查询结果
+
+          - Retrieved Result Files: ${{ steps.retrieve.outputs.file_count }}
+          - Retrieved Source Files: ${{ steps.retrieve.outputs.source_file_count }}
+          - Retrieved Objects: ${{ steps.retrieve.outputs.object_count }}
+          - Workflow Run ID: ${GITHUB_RUN_ID}
+
+          本次执行未保存或输出 DEV_SFDX_AUTH_URL、Access Token 或 Refresh Token。
+          EOF
+
+          PR_URL="$(
+            gh pr create \
+              --base main \
+              --head "${SNAPSHOT_BRANCH}" \
+              --title "chore: snapshot ${ENVIRONMENT_NAME} Salesforce metadata ${SNAPSHOT_DATE}" \
+              --body-file "${PR_BODY}"
+          )"
+
+          echo "pr_url=${PR_URL}" >> "${GITHUB_OUTPUT}"
+          echo "Pull Request created: ${PR_URL}"
+
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Salesforce Metadata Snapshot"
+            echo ""
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Environment | ${ENVIRONMENT_NAME:-Not resolved} |"
+            echo "| Org ID | ${SALESFORCE_ORG_ID:-Not resolved} |"
+            echo "| Instance URL | ${SALESFORCE_INSTANCE_URL:-Not resolved} |"
+            echo "| Metadata Mode | ${METADATA_MODE:-Not resolved} |"
+            echo "| Metadata Scope | ${METADATA_SCOPE:-Not resolved} |"
+            echo "| Discovered Types | ${METADATA_TYPE_COUNT:-0} |"
+            echo "| Discovered Members | ${METADATA_MEMBER_COUNT:-0} |"
+            echo "| Snapshot Directory | ${SNAPSHOT_DIR:-Not resolved} |"
+            echo "| Retrieved Result Files | ${{ steps.retrieve.outputs.file_count || '0' }} |"
+            echo "| Retrieved Source Files | ${{ steps.retrieve.outputs.source_file_count || '0' }} |"
+            echo "| Retrieved Objects | ${{ steps.retrieve.outputs.object_count || '0' }} |"
+            echo "| Pull Request | ${{ steps.create_pr.outputs.pr_url || 'Not created' }} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Logout Salesforce Org and clean temporary files
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+
+          if [ -n "${SALESFORCE_ORG_USERNAME:-}" ]; then
+            sf org logout \
+              --target-org "${SALESFORCE_ORG_USERNAME}" \
+              --no-prompt \
+              >/dev/null 2>&1
+          fi
+
+          rm -f \
+            "${RUNNER_TEMP}/dev-sfdx-auth-url.txt" \
+            "${RUNNER_TEMP}/salesforce-auth-result.json" \
+            "${RUNNER_TEMP}/salesforce-org-display.json" \
+            "${RUNNER_TEMP}/manifest-generation-result.json" \
+            "${RUNNER_TEMP}/salesforce-retrieve-result.json"
+
+          exit 0
