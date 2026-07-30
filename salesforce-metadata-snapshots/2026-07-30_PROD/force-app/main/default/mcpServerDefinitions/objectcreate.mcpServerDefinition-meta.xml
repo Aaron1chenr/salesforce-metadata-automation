@@ -1,0 +1,470 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<McpServerDefinition xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Create a custom object</description>
+    <masterLabel>object-create</masterLabel>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:getRelatedRecords</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getRelatedRecords</operation>
+        </apiDefinition>
+        <descriptionOverride>Retrieves child records related to a parent record by traversing relationships. Use this instead of a separate SOQL query when you already have a record ID and need its related records (e.g., get all Contacts for an Account, or all Opportunity Line Items for an Opportunity). Supports multi-level traversal (Account → Contacts → Cases). More efficient than multiple queries when navigating object relationships. Requires: parent object name, parent record ID, and relationship name (e.g., &quot;Contacts&quot;, &quot;Opportunities&quot;).</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getRelatedRecordsplatform_sobject_all</toolName>
+        <toolTitle>Get Related Records</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:listRecentSobjectRecords</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>listRecentSobjectRecords</operation>
+        </apiDefinition>
+        <descriptionOverride>Returns records of a specific type that the user recently viewed or modified. Use this as a starting point when the user refers to &quot;my accounts,&quot; &quot;recent cases,&quot; or &quot;that opportunity I was looking at&quot; without providing specific record IDs or names. Returns up to 2,000 records ordered by last viewed date. Requires the object API name (e.g., &quot;Account&quot;, &quot;Case&quot;, &quot;Opportunity&quot;).</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>listRecentSobjectRecordsplatform_sobject_all</toolName>
+        <toolTitle>Get Recently Viewed Records</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:soqlQuery</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>soqlQuery</operation>
+        </apiDefinition>
+        <descriptionOverride>Executes a SOQL query to retrieve Salesforce records. Use this when you know which object and fields you need—it&apos;s the primary way to read data. SOQL syntax: `SELECT fields FROM Object WHERE conditions ORDER BY field LIMIT n`. Supports relationship queries to traverse lookups (e.g., `Contact.Account.Name`) and subqueries for child records (e.g., `(SELECT Id FROM Contacts)`). Always include a WHERE clause to filter results and a LIMIT clause to control result size. For large objects, filter on indexed fields (Id, Name, foreign keys, External IDs) to avoid timeout errors. Maximum 50,000 total records per transaction across all queries. Example: `SELECT Id, Name, Industry FROM Account WHERE Industry = &apos;Technology&apos; LIMIT 100`  **When to use SOQL vs SOSL**: Use SOQL when you know which object contains your data and need precise filtering, sorting, aggregation, or relationship traversal. SOQL supports complex WHERE clauses, JOINs via relationships, GROUP BY, and ORDER BY.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>soqlQueryplatform_sobject_all</toolName>
+        <toolTitle>Query Records (SOQL)</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:find</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>find</operation>
+        </apiDefinition>
+        <descriptionOverride>Executes a text search across multiple objects simultaneously. Use this instead of `soql_query` when: (1) searching for a term that could exist in multiple object types, (2) you don&apos;t know which object contains the data, or (3) you need relevance-ranked text matching. Returns a maximum of 2,000 records total—if you need more results, use SOQL instead. Use search groups to narrow scope: `IN ALL FIELDS` (default), `IN NAME FIELDS`, `IN EMAIL FIELDS`, or `IN PHONE FIELDS`. Example: `FIND {Acme} IN NAME FIELDS RETURNING Account(Id, Name), Contact(Id, Name, Email), Opportunity(Id, Name)`  **When to use SOSL vs SOQL**: Use SOSL for &quot;find me anything matching X&quot; scenarios. It cannot traverse relationships or sort results by field values—if you need related records after finding matches, follow up with a SOQL query using the returned IDs. Limited to 20 SOSL queries per transaction (vs. 100 for SOQL).</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>findplatform_sobject_all</toolName>
+        <toolTitle>Search Across Objects (SOSL)</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:getUserInfo</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getUserInfo</operation>
+        </apiDefinition>
+        <descriptionOverride>Returns current user&apos;s identity, role, and preferences. Call this when you need to personalize responses, understand the user&apos;s team context, or apply their preferred defaults for currency, date ranges, or report formatting. Returns: User ID, name, role, profile, manager, local time, timezone, and user-specific preferences configured by admins (e.g., &quot;When showing pipeline, always break out by AE&quot;).</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getUserInfoplatform_sobject_all</toolName>
+        <toolTitle>Get Current User Info</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:getObjectSchema</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getObjectSchema</operation>
+        </apiDefinition>
+        <descriptionOverride>Returns Salesforce schema information optimized for LLM consumption. Call with NO PARAMETERS first to get an index of all queryable objects—this helps you understand what data exists (80-90% smaller than raw describe). Then call with a specific OBJECT_NAME to get field-level details when you need to construct queries or understand a specific object&apos;s structure. Includes admin-authored guidance about data quality and business definitions (e.g., &quot;use Calculated_ACV__c instead of Amount for accurate forecasting)&quot;;</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getObjectSchemaplatform_sobject_all</toolName>
+        <toolTitle>Get Object Schema (Enhanced)</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:createSobjectRecord</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>createSobjectRecord</operation>
+        </apiDefinition>
+        <descriptionOverride>Creates a new record. Call `describe_sobject` first to understand required fields and valid values—the operation fails if required fields are missing or values violate validation rules. Requires: object API name (e.g., &quot;Account&quot;, &quot;Contact&quot;, &quot;Custom_Object__c&quot;) and field-value pairs. Returns the new record&apos;s ID on success. All operations respect the user&apos;s permissions and field-level security; attempts to set fields the user cannot edit are rejected.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>createSobjectRecordplatform_sobject_all</toolName>
+        <toolTitle>Create Record</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:updateSobjectRecord</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>updateSobjectRecord</operation>
+        </apiDefinition>
+        <descriptionOverride>Updates an existing record by ID. Only include fields you want to change—omitted fields keep their current values. Call `describe_sobject` to verify field names and valid picklist values if unsure. Requires: object API name, record ID, and field-value pairs to update. Fails if: record doesn&apos;t exist, user lacks edit permission, or field validations fail. For updating records found via relationship traversal, consider `update_related_record` instead.</descriptionOverride>
+        <destructive>true</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>updateSobjectRecordplatform_sobject_all</toolName>
+        <toolTitle>Update Record</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:updateRelatedRecord</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>updateRelatedRecord</operation>
+        </apiDefinition>
+        <descriptionOverride>Updates a child record by navigating from a parent record through a relationship. Use this when you have the parent record context but need to modify a related record (e.g., update a Contact&apos;s email when you know the Account ID and Contact&apos;s position in the relationship). Requires: parent object name, parent record ID, relationship path, and field-value pairs to update.</descriptionOverride>
+        <destructive>true</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>updateRelatedRecordplatform_sobject_all</toolName>
+        <toolTitle>Update Related Record</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:deleteSobjectRecord</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>deleteSobjectRecord</operation>
+        </apiDefinition>
+        <descriptionOverride>Permanently deletes a record by ID. Use with caution—confirm with the user before deleting. Deleted records go to the Recycle Bin and can be recovered by the user in the Salesforce UI for up to 15 days (no undelete tool is available here). Requires: object API name and record ID. Fails if: user lacks delete permission, or deletion would violate relationship rules (e.g., deleting a parent with required child relationships).</descriptionOverride>
+        <destructive>true</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>deleteSobjectRecordplatform_sobject_all</toolName>
+        <toolTitle>Delete Record</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-all:deleteRelatedRecord</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>deleteRelatedRecord</operation>
+        </apiDefinition>
+        <descriptionOverride>Deletes a child record by navigating from a parent record through a relationship. Same cautions as `delete_sobject_record`—confirm with user before deleting. Use when you have the parent context and need to remove a specific related record. Requires: parent object name, parent record ID, and relationship path to the record to delete.</descriptionOverride>
+        <destructive>true</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>deleteRelatedRecordplatform_sobject_all</toolName>
+        <toolTitle>Delete Related Record</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:industries.engagement-interaction:fetchEngagementInteraction</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>fetchEngagementInteraction</operation>
+        </apiDefinition>
+        <descriptionOverride>Method to fetch engagements</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>fetchEngagementInteractionindustries_engagement_interaction</toolName>
+        <toolTitle>fetchEngagementInteraction</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:industries.engagement-interaction:createEngagementInteraction</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>createEngagementInteraction</operation>
+        </apiDefinition>
+        <descriptionOverride>Method to create engagements</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>createEngagementInteractionindustries_engagement_interaction</toolName>
+        <toolTitle>createEngagementInteraction</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:industries.engagement-interaction:deleteEngagementInteraction</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>deleteEngagementInteraction</operation>
+        </apiDefinition>
+        <descriptionOverride>Method to delete engagements</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>deleteEngagementInteractionindustries_engagement_interaction</toolName>
+        <toolTitle>deleteEngagementInteraction</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:data.data-cloud-queries:postDcQuerySql</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>postDcQuerySql</operation>
+        </apiDefinition>
+        <descriptionOverride>Execute a Data Cloud SQL query and return metadata and first chunk of data.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>postDcQuerySqldata_data_cloud_queries</toolName>
+        <toolTitle>postDcQuerySql</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:data.data-cloud-queries:getDcMetadata</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getDcMetadata</operation>
+        </apiDefinition>
+        <descriptionOverride>Query MetaData API. Lists all entities in the dataspace.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getDcMetadatadata_data_cloud_queries</toolName>
+        <toolTitle>getDcMetadata</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.metadata-experts:executeMetadataAction</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>executeMetadataAction</operation>
+        </apiDefinition>
+        <descriptionOverride>Executes invocable action for Salesforce metadata experts. This tool allows you to execute action for different metadata types. Required parameters: 1. metadataType - The type of metadata (e.g., CustomApplication, CustomTab, FlexiPage, CustomObject, ExperienceSiteLwr, ExperienceSiteReact, etc.) 2. actionName - The name of the invocable action to execute 3. parameters - Optional JSON object containing parameters for the action.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>executeMetadataActionplatform_metadata_experts</toolName>
+        <toolTitle>executeMetadataAction</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.salesforce-api-context:getContextToolingAndDataObject</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getContextToolingAndDataObject</operation>
+        </apiDefinition>
+        <descriptionOverride>Provides contextual information about Salesforce tooling objects to help generate accurate Salesforce tooling object files. This tool gives you complete field definitions, valid values, constraints, and examples for tooling objects. It is a useful resource for creating valid Salesforce tooling object files when you need to generate them programmatically, or want to ensure accuracy.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getContextToolingAndDataObjectplatform_salesforce_api_context</toolName>
+        <toolTitle>getContextToolingAndDataObject</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.salesforce-api-context:getMetadataTypeSections</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getMetadataTypeSections</operation>
+        </apiDefinition>
+        <descriptionOverride>Returns the list of available section keys for a given metadata type. Use this to discover which sections can be requested from get_metadata_type_context.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getMetadataTypeSectionsplatform_salesforce_api_context</toolName>
+        <toolTitle>getMetadataTypeSections</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.salesforce-api-context:getMetadataTypeContext</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getMetadataTypeContext</operation>
+        </apiDefinition>
+        <descriptionOverride>Returns concatenated contextual information for a given metadata type and a set of requested sections (comma-separated). Use get_metadata_type_sections first to discover valid section keys.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getMetadataTypeContextplatform_salesforce_api_context</toolName>
+        <toolTitle>getMetadataTypeContext</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.salesforce-api-context:getMetadataTypeFields</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getMetadataTypeFields</operation>
+        </apiDefinition>
+        <descriptionOverride>Returns the list of fields for a metadata type along with the available field property columns.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getMetadataTypeFieldsplatform_salesforce_api_context</toolName>
+        <toolTitle>getMetadataTypeFields</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.salesforce-api-context:getMetadataTypeFieldsProperties</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getMetadataTypeFieldsProperties</operation>
+        </apiDefinition>
+        <descriptionOverride>Returns values for multiple requested properties across multiple fields for a metadata type.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getMetadataTypeFieldsPropertiesplatform_salesforce_api_context</toolName>
+        <toolTitle>getMetadataTypeFieldsProperties</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.salesforce-api-context:searchMetadataTypes</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>searchMetadataTypes</operation>
+        </apiDefinition>
+        <descriptionOverride>Searches metadata types by substring. Returns a JSON array of matching type names.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>false</idempotent>
+        <openWorld>false</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>searchMetadataTypesplatform_salesforce_api_context</toolName>
+        <toolTitle>searchMetadataTypes</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-deletes:getRelatedRecords</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getRelatedRecords</operation>
+        </apiDefinition>
+        <descriptionOverride>Retrieves child records related to a parent record by traversing relationships. Use this instead of a separate SOQL query when you already have a record ID and need its related records (e.g., get all Contacts for an Account, or all Opportunity Line Items for an Opportunity). Supports multi-level traversal (Account → Contacts → Cases). More efficient than multiple queries when navigating object relationships. Requires: parent object name, parent record ID, and relationship name (e.g., &quot;Contacts&quot;, &quot;Opportunities&quot;).</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getRelatedRecordsplatform_sobject_deletes</toolName>
+        <toolTitle>Get Related Records</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-deletes:listRecentSobjectRecords</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>listRecentSobjectRecords</operation>
+        </apiDefinition>
+        <descriptionOverride>Returns records of a specific type that the user recently viewed or modified. Use this as a starting point when the user refers to &quot;my accounts,&quot; &quot;recent cases,&quot; or &quot;that opportunity I was looking at&quot; without providing specific record IDs or names. Returns up to 2,000 records ordered by last viewed date. Requires the object API name (e.g., &quot;Account&quot;, &quot;Case&quot;, &quot;Opportunity&quot;).</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>listRecentSobjectRecordsplatform_sobject_deletes</toolName>
+        <toolTitle>Get Recently Viewed Records</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-deletes:soqlQuery</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>soqlQuery</operation>
+        </apiDefinition>
+        <descriptionOverride>Executes a SOQL query to retrieve Salesforce records. Use this when you know which object and fields you need—it&apos;s the primary way to read data. SOQL syntax: `SELECT fields FROM Object WHERE conditions ORDER BY field LIMIT n`. Supports relationship queries to traverse lookups (e.g., `Contact.Account.Name`) and subqueries for child records (e.g., `(SELECT Id FROM Contacts)`). Always include a WHERE clause to filter results and a LIMIT clause to control result size. For large objects, filter on indexed fields (Id, Name, foreign keys, External IDs) to avoid timeout errors. Maximum 50,000 total records per transaction across all queries. Example: `SELECT Id, Name, Industry FROM Account WHERE Industry = &apos;Technology&apos; LIMIT 100`  **When to use SOQL vs SOSL**: Use SOQL when you know which object contains your data and need precise filtering, sorting, aggregation, or relationship traversal. SOQL supports complex WHERE clauses, JOINs via relationships, GROUP BY, and ORDER BY.</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>soqlQueryplatform_sobject_deletes</toolName>
+        <toolTitle>Query Records (SOQL)</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-deletes:find</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>find</operation>
+        </apiDefinition>
+        <descriptionOverride>Executes a text search across multiple objects simultaneously. Use this instead of `soql_query` when: (1) searching for a term that could exist in multiple object types, (2) you don&apos;t know which object contains the data, or (3) you need relevance-ranked text matching. Returns a maximum of 2,000 records total—if you need more results, use SOQL instead. Use search groups to narrow scope: `IN ALL FIELDS` (default), `IN NAME FIELDS`, `IN EMAIL FIELDS`, or `IN PHONE FIELDS`. Example: `FIND {Acme} IN NAME FIELDS RETURNING Account(Id, Name), Contact(Id, Name, Email), Opportunity(Id, Name)`  **When to use SOSL vs SOQL**: Use SOSL for &quot;find me anything matching X&quot; scenarios. It cannot traverse relationships or sort results by field values—if you need related records after finding matches, follow up with a SOQL query using the returned IDs. Limited to 20 SOSL queries per transaction (vs. 100 for SOQL).</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>findplatform_sobject_deletes</toolName>
+        <toolTitle>Search Across Objects (SOSL)</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-deletes:getUserInfo</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getUserInfo</operation>
+        </apiDefinition>
+        <descriptionOverride>Returns current user&apos;s identity, role, and preferences. Call this when you need to personalize responses, understand the user&apos;s team context, or apply their preferred defaults for currency, date ranges, or report formatting. Returns: User ID, name, role, profile, manager, local time, timezone, and user-specific preferences configured by admins (e.g., &quot;When showing pipeline, always break out by AE&quot;).</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getUserInfoplatform_sobject_deletes</toolName>
+        <toolTitle>Get Current User Info</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-deletes:getObjectSchema</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>getObjectSchema</operation>
+        </apiDefinition>
+        <descriptionOverride>Returns Salesforce schema information optimized for LLM consumption. Call with NO PARAMETERS first to get an index of all queryable objects—this helps you understand what data exists (80-90% smaller than raw describe). Then call with a specific OBJECT_NAME to get field-level details when you need to construct queries or understand a specific object&apos;s structure. Includes admin-authored guidance about data quality and business definitions (e.g., &quot;use Calculated_ACV__c instead of Amount for accurate forecasting)&quot;;</descriptionOverride>
+        <destructive>false</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>true</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>getObjectSchemaplatform_sobject_deletes</toolName>
+        <toolTitle>Get Object Schema (Enhanced)</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-deletes:deleteSobjectRecord</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>deleteSobjectRecord</operation>
+        </apiDefinition>
+        <descriptionOverride>Permanently deletes a record by ID. Use with caution—confirm with the user before deleting. Deleted records go to the Recycle Bin and can be recovered by the user in the Salesforce UI for up to 15 days (no undelete tool is available here). Requires: object API name and record ID. Fails if: user lacks delete permission, or deletion would violate relationship rules (e.g., deleting a parent with required child relationships).</descriptionOverride>
+        <destructive>true</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>deleteSobjectRecordplatform_sobject_deletes</toolName>
+        <toolTitle>Delete Record</toolTitle>
+    </tools>
+    <tools>
+        <apiDefinition>
+            <apiIdentifier>psmcps:platform.sobject-deletes:deleteRelatedRecord</apiIdentifier>
+            <apiSource>API_CATALOG</apiSource>
+            <operation>deleteRelatedRecord</operation>
+        </apiDefinition>
+        <descriptionOverride>Deletes a child record by navigating from a parent record through a relationship. Same cautions as `delete_sobject_record`—confirm with user before deleting. Use when you have the parent context and need to remove a specific related record. Requires: parent object name, parent record ID, and relationship path to the record to delete.</descriptionOverride>
+        <destructive>true</destructive>
+        <idempotent>true</idempotent>
+        <openWorld>true</openWorld>
+        <readOnly>false</readOnly>
+        <returnDirect>false</returnDirect>
+        <toolName>deleteRelatedRecordplatform_sobject_deletes</toolName>
+        <toolTitle>Delete Related Record</toolTitle>
+    </tools>
+</McpServerDefinition>
