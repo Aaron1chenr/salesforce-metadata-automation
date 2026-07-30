@@ -925,11 +925,34 @@ jobs:
 
           echo "Snapshot project structure:"
 
+          # 不在 set -o pipefail 下使用 find | sort | head。
+          # 当文件超过 300 个时，head 会提前关闭管道，导致上游命令收到 SIGPIPE，
+          # GitHub Actions 会把本来已经成功的校验步骤判定为失败。
+          SNAPSHOT_FILE_LIST="${RUNNER_TEMP}/snapshot-file-list.txt"
+
           find "${SNAPSHOT_DIR}" \
             -maxdepth 5 \
             -type f \
-            | sort \
-            | head -300
+            -print \
+            > "${SNAPSHOT_FILE_LIST}.unsorted"
+
+          LC_ALL=C sort \
+            "${SNAPSHOT_FILE_LIST}.unsorted" \
+            > "${SNAPSHOT_FILE_LIST}"
+
+          SNAPSHOT_FILE_COUNT="$(wc -l < "${SNAPSHOT_FILE_LIST}" | xargs)"
+
+          sed -n '1,300p' "${SNAPSHOT_FILE_LIST}"
+
+          if [ "${SNAPSHOT_FILE_COUNT}" -gt 300 ]; then
+            echo "... 仅展示前 300 个文件；快照文件总数：${SNAPSHOT_FILE_COUNT}"
+          else
+            echo "快照文件总数：${SNAPSHOT_FILE_COUNT}"
+          fi
+
+          rm -f \
+            "${SNAPSHOT_FILE_LIST}" \
+            "${SNAPSHOT_FILE_LIST}.unsorted"
 
       - name: Add Metadata tables to Actions summary
         shell: bash
