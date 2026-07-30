@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomFieldTranslation xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label><!-- CR类型 --></label>
+    <name>CR_Type__c</name>
+    <picklistValues>
+        <masterLabel>其他</masterLabel>
+        <translation><!-- 其他 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>功能变更</masterLabel>
+        <translation><!-- 功能变更 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>技术优化</masterLabel>
+        <translation><!-- 技术优化 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>缺陷修复</masterLabel>
+        <translation><!-- 缺陷修复 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>配置修改</masterLabel>
+        <translation><!-- 配置修改 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>需求调整</masterLabel>
+        <translation><!-- 需求调整 --></translation>
+    </picklistValues>
+</CustomFieldTranslation>

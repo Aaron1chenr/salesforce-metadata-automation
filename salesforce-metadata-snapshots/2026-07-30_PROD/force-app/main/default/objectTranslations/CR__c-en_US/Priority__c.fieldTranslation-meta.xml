@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomFieldTranslation xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label><!-- 优先级 --></label>
+    <name>Priority__c</name>
+    <picklistValues>
+        <masterLabel>中</masterLabel>
+        <translation><!-- 中 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>低</masterLabel>
+        <translation><!-- 低 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>紧急</masterLabel>
+        <translation><!-- 紧急 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>高</masterLabel>
+        <translation><!-- 高 --></translation>
+    </picklistValues>
+</CustomFieldTranslation>

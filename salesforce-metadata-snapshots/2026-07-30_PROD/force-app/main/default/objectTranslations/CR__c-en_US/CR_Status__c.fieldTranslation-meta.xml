@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomFieldTranslation xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label><!-- CR状态 --></label>
+    <name>CR_Status__c</name>
+    <picklistValues>
+        <masterLabel>实施中</masterLabel>
+        <translation><!-- 实施中 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>已取消</masterLabel>
+        <translation><!-- 已取消 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>已完成</masterLabel>
+        <translation><!-- 已完成 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>已批准</masterLabel>
+        <translation><!-- 已批准 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>已拒绝</masterLabel>
+        <translation><!-- 已拒绝 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>待审批</masterLabel>
+        <translation><!-- 待审批 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>待评估</masterLabel>
+        <translation><!-- 待评估 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>草稿</masterLabel>
+        <translation><!-- 草稿 --></translation>
+    </picklistValues>
+    <picklistValues>
+        <masterLabel>评估中</masterLabel>
+        <translation><!-- 评估中 --></translation>
+    </picklistValues>
+</CustomFieldTranslation>

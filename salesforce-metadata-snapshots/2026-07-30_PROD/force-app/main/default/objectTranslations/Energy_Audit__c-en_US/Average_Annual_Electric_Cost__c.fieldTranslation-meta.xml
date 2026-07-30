@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomFieldTranslation xmlns="http://soap.sforce.com/2006/04/metadata">
+    <help><!-- Annual cost per square foot. --></help>
+    <label><!-- Average Annual Electric Cost --></label>
+    <name>Average_Annual_Electric_Cost__c</name>
+</CustomFieldTranslation>
