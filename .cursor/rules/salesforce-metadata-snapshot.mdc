@@ -1,0 +1,123 @@
+---
+description: Route Salesforce Cursor__c metadata snapshot commands to the GitHub Actions workflow
+alwaysApply: true
+---
+
+# Salesforce Metadata Snapshot routing rule
+
+When an incoming webhook payload has `action` equal to `salesforce_metadata_snapshot`, this is a GitHub Actions dispatch task, not a local Salesforce CLI query.
+
+## Mandatory behavior
+
+1. Never run any local Salesforce metadata command for this action.
+   - Do not run `sf project retrieve start`.
+   - Do not run `sf project generate manifest --from-org`.
+   - Do not inspect or depend on a local/default Salesforce target org.
+   - `NoDefaultEnvError` is not a valid reason to block this request because the target org is authenticated inside GitHub Actions through `DEV_SFDX_AUTH_URL`.
+2. Do not create or edit Salesforce metadata locally.
+3. Trigger the workflow file `retrieve-salesforce-metadata.yml` in repository `Aaron1chenr/salesforce-metadata-automation` on branch `main`.
+4. Pass the originating Salesforce `Cursor__c` record ID as `cursor_record_id`.
+5. Pass `metadata_types` as an empty string when the request asks for all metadata or does not name a type.
+6. After GitHub accepts the dispatch, report the GitHub workflow URL when available. Do not wait for the metadata retrieval to finish. The workflow itself writes the final table to `Cursor__c.Execution_Result__c`.
+
+## Required webhook payload
+
+```json
+{
+  "source": "salesforce",
+  "action": "salesforce_metadata_snapshot",
+  "recordId": "a Salesforce Cursor__c record ID",
+  "requestId": "a unique request ID",
+  "metadataTypes": "",
+  "environmentName": "",
+  "prompt": "the user's original natural-language command"
+}
+```
+
+Accept `cursorRecordId` as a fallback for `recordId` and `cursor_record_id` as a second fallback.
+
+## Dispatch implementation
+
+Use the GitHub REST API. The environment must contain a secret named `GH_PAT` with Actions write permission for the repository.
+
+```bash
+set -euo pipefail
+
+REPOSITORY="Aaron1chenr/salesforce-metadata-automation"
+WORKFLOW_FILE="retrieve-salesforce-metadata.yml"
+TARGET_REF="main"
+
+RECORD_ID="$(printf '%s' "$WEBHOOK_PAYLOAD" | jq -r '.recordId // .cursorRecordId // .cursor_record_id // empty')"
+REQUEST_ID="$(printf '%s' "$WEBHOOK_PAYLOAD" | jq -r '.requestId // .request_id // empty')"
+METADATA_TYPES="$(printf '%s' "$WEBHOOK_PAYLOAD" | jq -r '.metadataTypes // .metadata_types // ""')"
+ENVIRONMENT_NAME="$(printf '%s' "$WEBHOOK_PAYLOAD" | jq -r '.environmentName // .environment_name // ""')"
+
+if [[ ! "$RECORD_ID" =~ ^[A-Za-z0-9]{15,18}$ ]]; then
+  echo "Invalid Salesforce Cursor__c record ID."
+  exit 1
+fi
+
+if [ -z "$REQUEST_ID" ]; then
+  REQUEST_ID="${RECORD_ID}-$(date +%s)"
+fi
+
+REQUEST_BODY="$(
+  jq -n \
+    --arg ref "$TARGET_REF" \
+    --arg cursor_record_id "$RECORD_ID" \
+    --arg request_id "$REQUEST_ID" \
+    --arg metadata_types "$METADATA_TYPES" \
+    --arg environment_name "$ENVIRONMENT_NAME" \
+    '{
+      ref: $ref,
+      inputs: {
+        cursor_record_id: $cursor_record_id,
+        request_id: $request_id,
+        metadata_types: $metadata_types,
+        environment_name: $environment_name
+      }
+    }'
+)"
+
+HTTP_RESPONSE="$(
+  curl \
+    --silent \
+    --show-error \
+    --location \
+    --write-out '\n%{http_code}' \
+    --request POST \
+    --header 'Accept: application/vnd.github+json' \
+    --header "Authorization: Bearer ${GH_PAT}" \
+    --header 'X-GitHub-Api-Version: 2026-03-10' \
+    --header 'Content-Type: application/json' \
+    --data "$REQUEST_BODY" \
+    "https://api.github.com/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/dispatches"
+)"
+
+HTTP_STATUS="$(printf '%s' "$HTTP_RESPONSE" | tail -n 1)"
+HTTP_BODY="$(printf '%s' "$HTTP_RESPONSE" | sed '$d')"
+
+if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "204" ]; then
+  echo "GitHub workflow dispatch failed with HTTP ${HTTP_STATUS}: ${HTTP_BODY}"
+  exit 1
+fi
+
+RUN_URL="$(printf '%s' "$HTTP_BODY" | jq -r '.html_url // empty' 2>/dev/null || true)"
+
+if [ -n "$RUN_URL" ]; then
+  echo "GitHub Action triggered: ${RUN_URL}"
+else
+  echo "GitHub Action dispatch accepted. The final result will be written back to Salesforce Cursor__c.Execution_Result__c."
+fi
+```
+
+## Natural-language interpretation
+
+- “查询所有 metadata”, “查询 org 全部 metadata”, or no named Metadata type: `metadata_types` must be `""`.
+- “查询对象”: `metadata_types` is `CustomObject`.
+- “查询对象、布局、权限集”: `metadata_types` is `CustomObject,Layout,PermissionSet`.
+- Preserve exact Salesforce Metadata API type names when the user supplies them.
+
+## Completion response
+
+A successful Cursor response only confirms that GitHub accepted the dispatch. It must not claim that the metadata retrieval has completed. The GitHub workflow is responsible for retrieval, table generation, repository snapshot, Pull Request creation, and Salesforce callback.
