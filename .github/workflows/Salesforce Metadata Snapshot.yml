@@ -15,6 +15,11 @@ on:
         default: ""
         type: string
 
+      request_id:
+        description: "Salesforce Cursor__c 请求 ID，用于定位记录并回写 Execution_Result__c"
+        required: true
+        type: string
+
   repository_dispatch:
     types:
       - cursor-salesforce-metadata-snapshot
@@ -46,6 +51,16 @@ jobs:
             github.event.client_payload.environment_name ||
             '' }}
 
+      REQUEST_ID: >-
+        ${{ inputs.request_id ||
+            github.event.client_payload.request_id ||
+            github.event.client_payload.requestId ||
+            '' }}
+
+      # 默认按 Cursor__c.Request_Id__c 定位记录。
+      # 如实际字段 API Name 不同，在 GitHub Repository Variables 中设置 CURSOR_REQUEST_ID_FIELD。
+      CURSOR_REQUEST_ID_FIELD: ${{ vars.CURSOR_REQUEST_ID_FIELD || 'Request_Id__c' }}
+
       SF_LIST_METADATA_BATCH_SIZE: "5"
 
     steps:
@@ -54,6 +69,29 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+
+      - name: Validate Salesforce callback input
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${REQUEST_ID:-}" ]; then
+            echo "::error::request_id 不能为空。Workflow 必须通过请求 ID 定位对应的 Cursor__c 记录。"
+            exit 1
+          fi
+
+          if [ "${#REQUEST_ID}" -gt 100 ]; then
+            echo "::error::request_id 长度不能超过 100 个字符。"
+            exit 1
+          fi
+
+          if [[ ! "${CURSOR_REQUEST_ID_FIELD}" =~ ^[A-Za-z][A-Za-z0-9_]*(__c)?$ ]]; then
+            echo "::error::CURSOR_REQUEST_ID_FIELD 不是有效的 Salesforce 字段 API Name：${CURSOR_REQUEST_ID_FIELD}"
+            exit 1
+          fi
+
+          echo "Request ID: ${REQUEST_ID}"
+          echo "Cursor request field: ${CURSOR_REQUEST_ID_FIELD}"
 
       - name: Install Salesforce CLI
         shell: bash
@@ -187,6 +225,177 @@ jobs:
           echo "Org ID: ${ORG_ID}"
           echo "Instance URL: ${INSTANCE_URL}"
           echo "Connected Status: ${ORG_STATUS}"
+
+      - name: Authenticate Salesforce callback Org
+        if: env.REQUEST_ID != ''
+        shell: bash
+        env:
+          CALLBACK_SALESFORCE_AUTH_URL: ${{ secrets.CALLBACK_SFDX_AUTH_URL || secrets.DEV_SFDX_AUTH_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CALLBACK_SALESFORCE_AUTH_URL:-}" ]; then
+            echo "::error::CALLBACK_SFDX_AUTH_URL 与 DEV_SFDX_AUTH_URL 均未配置。"
+            exit 1
+          fi
+
+          CALLBACK_AUTH_FILE="${RUNNER_TEMP}/callback-sfdx-auth-url.txt"
+          CALLBACK_AUTH_RESULT="${RUNNER_TEMP}/salesforce-callback-auth-result.json"
+          CALLBACK_ORG_DISPLAY="${RUNNER_TEMP}/salesforce-callback-org-display.json"
+          CALLBACK_AUTH_ALIAS="metadata-callback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          umask 077
+          printf '%s' "${CALLBACK_SALESFORCE_AUTH_URL}" > "${CALLBACK_AUTH_FILE}"
+
+          sf org login sfdx-url \
+            --sfdx-url-file "${CALLBACK_AUTH_FILE}" \
+            --alias "${CALLBACK_AUTH_ALIAS}" \
+            --json \
+            > "${CALLBACK_AUTH_RESULT}"
+
+          CALLBACK_ORG_USERNAME="$(jq -r '.result.username // empty' "${CALLBACK_AUTH_RESULT}")"
+
+          if [ -z "${CALLBACK_ORG_USERNAME}" ]; then
+            echo "::error::无法识别回写 Salesforce Org 的 Username。"
+            exit 1
+          fi
+
+          sf org display \
+            --target-org "${CALLBACK_ORG_USERNAME}" \
+            --json \
+            > "${CALLBACK_ORG_DISPLAY}"
+
+          CALLBACK_INSTANCE_URL="$(jq -r '.result.instanceUrl // empty' "${CALLBACK_ORG_DISPLAY}")"
+          CALLBACK_ORG_ID="$(jq -r '.result.id // .result.orgId // empty' "${CALLBACK_ORG_DISPLAY}")"
+
+          if [ -z "${CALLBACK_INSTANCE_URL}" ] || [ -z "${CALLBACK_ORG_ID}" ]; then
+            echo "::error::无法识别回写 Salesforce Org 的 Instance URL 或 Org ID。"
+            exit 1
+          fi
+
+          echo "CALLBACK_SALESFORCE_ORG_USERNAME=${CALLBACK_ORG_USERNAME}" >> "${GITHUB_ENV}"
+          echo "CALLBACK_SALESFORCE_INSTANCE_URL=${CALLBACK_INSTANCE_URL}" >> "${GITHUB_ENV}"
+          echo "CALLBACK_SALESFORCE_ORG_ID=${CALLBACK_ORG_ID}" >> "${GITHUB_ENV}"
+          echo "CALLBACK_SALESFORCE_AUTH_ALIAS=${CALLBACK_AUTH_ALIAS}" >> "${GITHUB_ENV}"
+
+          rm -f \
+            "${CALLBACK_AUTH_FILE}" \
+            "${CALLBACK_AUTH_RESULT}" \
+            "${CALLBACK_ORG_DISPLAY}"
+
+          echo "Salesforce callback Org 识别成功。"
+          echo "Callback Org ID: ${CALLBACK_ORG_ID}"
+          echo "Callback Instance URL: ${CALLBACK_INSTANCE_URL}"
+
+      - name: Resolve Cursor record by request ID
+        id: resolve_cursor_record
+        if: env.REQUEST_ID != '' && env.CALLBACK_SALESFORCE_ORG_USERNAME != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          QUERY_RESULT="${RUNNER_TEMP}/salesforce-cursor-request-query.json"
+
+          # 使用 Python 安全转义 SOQL 字符串，避免请求 ID 中的单引号或反斜杠破坏查询。
+          ESCAPED_REQUEST_ID="$(
+            python3 <<'PY_ESCAPE'
+          import os
+          value = os.environ["REQUEST_ID"]
+          print(value.replace("\\", "\\\\").replace("'", "\\'"), end="")
+          PY_ESCAPE
+          )"
+
+          SOQL="SELECT Id, ${CURSOR_REQUEST_ID_FIELD} FROM Cursor__c WHERE ${CURSOR_REQUEST_ID_FIELD} = '${ESCAPED_REQUEST_ID}' ORDER BY CreatedDate DESC LIMIT 2"
+
+          sf data query \
+            --query "${SOQL}" \
+            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
+            --json \
+            > "${QUERY_RESULT}"
+
+          MATCH_COUNT="$(jq -r '.result.totalSize // 0' "${QUERY_RESULT}")"
+
+          if [ "${MATCH_COUNT}" -eq 0 ]; then
+            echo "::error::未找到 ${CURSOR_REQUEST_ID_FIELD} = ${REQUEST_ID} 的 Cursor__c 记录。"
+            exit 1
+          fi
+
+          if [ "${MATCH_COUNT}" -gt 1 ]; then
+            echo "::error::请求 ID ${REQUEST_ID} 匹配到多条 Cursor__c 记录。请将 ${CURSOR_REQUEST_ID_FIELD} 配置为 Unique。"
+            exit 1
+          fi
+
+          RESOLVED_CURSOR_RECORD_ID="$(jq -r '.result.records[0].Id // empty' "${QUERY_RESULT}")"
+
+          if [[ ! "${RESOLVED_CURSOR_RECORD_ID}" =~ ^[A-Za-z0-9]{15,18}$ ]]; then
+            echo "::error::未能从请求 ID 解析出有效的 Cursor__c 记录 ID。"
+            exit 1
+          fi
+
+          echo "RESOLVED_CURSOR_RECORD_ID=${RESOLVED_CURSOR_RECORD_ID}" >> "${GITHUB_ENV}"
+          echo "cursor_record_id=${RESOLVED_CURSOR_RECORD_ID}" >> "${GITHUB_OUTPUT}"
+
+          rm -f "${QUERY_RESULT}"
+
+          echo "Cursor__c record resolved by request ID."
+          echo "Resolved record ID: ${RESOLVED_CURSOR_RECORD_ID}"
+
+      - name: Mark Salesforce request as running
+        if: steps.resolve_cursor_record.outputs.cursor_record_id != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CALLBACK_DISPLAY="${RUNNER_TEMP}/salesforce-callback-display-running.json"
+          CALLBACK_PAYLOAD="${RUNNER_TEMP}/salesforce-callback-running.json"
+
+          sf org display \
+            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
+            --verbose \
+            --json \
+            > "${CALLBACK_DISPLAY}"
+
+          ACCESS_TOKEN="$(jq -r '.result.accessToken // empty' "${CALLBACK_DISPLAY}")"
+          CALLBACK_INSTANCE_URL="$(jq -r '.result.instanceUrl // empty' "${CALLBACK_DISPLAY}")"
+
+          if [ -z "${ACCESS_TOKEN}" ] || [ -z "${CALLBACK_INSTANCE_URL}" ]; then
+            echo "::error::无法获取用于回写 Salesforce 的访问令牌或实例地址。"
+            exit 1
+          fi
+
+          echo "::add-mask::${ACCESS_TOKEN}"
+
+          API_VERSION="$(
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+              "${CALLBACK_INSTANCE_URL}/services/data/" \
+              | jq -r '.[-1].version // empty'
+          )"
+
+          if [ -z "${API_VERSION}" ]; then
+            echo "::error::无法识别 Salesforce REST API 版本。"
+            exit 1
+          fi
+
+          jq -n \
+            --arg value "执行状态：GitHub Action 已启动\n请求 ID：${REQUEST_ID}\nWorkflow：${GITHUB_WORKFLOW}\n正在从 DEV_SFDX_AUTH_URL 对应的 Org 查询 Metadata，请稍后刷新当前记录。" \
+            '{Execution_Result__c: $value}' \
+            > "${CALLBACK_PAYLOAD}"
+
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --request PATCH \
+            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data-binary "@${CALLBACK_PAYLOAD}" \
+            "${CALLBACK_INSTANCE_URL}/services/data/v${API_VERSION}/sobjects/Cursor__c/${RESOLVED_CURSOR_RECORD_ID}"
+
+          rm -f "${CALLBACK_DISPLAY}" "${CALLBACK_PAYLOAD}"
 
       - name: Resolve environment and snapshot directory
         id: snapshot_context
@@ -914,12 +1123,262 @@ jobs:
             echo "| Pull Request | ${{ steps.create_pr.outputs.pr_url || 'Not created' }} |"
           } >> "${GITHUB_STEP_SUMMARY}"
 
+      - name: Return Metadata table to Salesforce Cursor record
+        if: always() && steps.resolve_cursor_record.outputs.cursor_record_id != '' && env.CALLBACK_SALESFORCE_ORG_USERNAME != ''
+        shell: bash
+        env:
+          WORKFLOW_JOB_STATUS: ${{ job.status }}
+          PR_URL: ${{ steps.create_pr.outputs.pr_url }}
+          METADATA_ROW_COUNT: ${{ steps.metadata_table.outputs.metadata_row_count }}
+          METADATA_TYPE_COUNT_CALLBACK: ${{ steps.metadata_table.outputs.metadata_table_type_count }}
+          RETRIEVED_SOURCE_FILE_COUNT: ${{ steps.retrieve.outputs.source_file_count }}
+          RETRIEVED_OBJECT_COUNT: ${{ steps.retrieve.outputs.object_count }}
+        run: |
+          set -euo pipefail
+
+          CALLBACK_DISPLAY="${RUNNER_TEMP}/salesforce-callback-display-final.json"
+          CALLBACK_DESCRIBE="${RUNNER_TEMP}/salesforce-cursor-describe.json"
+          CALLBACK_PAYLOAD="${RUNNER_TEMP}/salesforce-callback-final.json"
+          CALLBACK_RESULT="${RUNNER_TEMP}/salesforce-execution-result.txt"
+
+          sf org display \
+            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
+            --verbose \
+            --json \
+            > "${CALLBACK_DISPLAY}"
+
+          ACCESS_TOKEN="$(jq -r '.result.accessToken // empty' "${CALLBACK_DISPLAY}")"
+          CALLBACK_INSTANCE_URL="$(jq -r '.result.instanceUrl // empty' "${CALLBACK_DISPLAY}")"
+
+          if [ -z "${ACCESS_TOKEN}" ] || [ -z "${CALLBACK_INSTANCE_URL}" ]; then
+            echo "::error::无法获取用于回写 Salesforce 的访问令牌或实例地址。"
+            exit 1
+          fi
+
+          echo "::add-mask::${ACCESS_TOKEN}"
+
+          API_VERSION=""
+          if [ -n "${SNAPSHOT_DIR:-}" ] && [ -f "${SNAPSHOT_DIR}/sfdx-project.json" ]; then
+            API_VERSION="$(jq -r '.sourceApiVersion // empty' "${SNAPSHOT_DIR}/sfdx-project.json")"
+          fi
+          if [ -z "${API_VERSION}" ]; then
+            API_VERSION="67.0"
+          fi
+
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+            "${CALLBACK_INSTANCE_URL}/services/data/v${API_VERSION}/sobjects/Cursor__c/describe" \
+            > "${CALLBACK_DESCRIBE}"
+
+          FIELD_LENGTH="$(
+            jq -r '
+              .fields[]
+              | select(.name == "Execution_Result__c")
+              | .length // 0
+            ' "${CALLBACK_DESCRIBE}"
+          )"
+
+          FIELD_HTML_FORMATTED="$(
+            jq -r '
+              .fields[]
+              | select(.name == "Execution_Result__c")
+              | .htmlFormatted // false
+            ' "${CALLBACK_DESCRIBE}"
+          )"
+
+          if [ -z "${FIELD_LENGTH}" ] || [ "${FIELD_LENGTH}" = "0" ]; then
+            echo "::error::Cursor__c.Execution_Result__c 不存在，或当前用户无字段访问权限。"
+            exit 1
+          fi
+
+          export FIELD_LENGTH
+          export FIELD_HTML_FORMATTED
+          export WORKFLOW_JOB_STATUS
+          export REQUEST_ID
+          export RESOLVED_CURSOR_RECORD_ID
+          export GITHUB_REPOSITORY
+          export GITHUB_RUN_ID
+          export GITHUB_WORKFLOW
+          export PR_URL
+          export METADATA_ROW_COUNT
+          export METADATA_TYPE_COUNT_CALLBACK
+          export RETRIEVED_SOURCE_FILE_COUNT
+          export RETRIEVED_OBJECT_COUNT
+          export CALLBACK_RESULT
+          export SNAPSHOT_DIR
+          export ENVIRONMENT_NAME
+          export SALESFORCE_ORG_ID
+          export SALESFORCE_INSTANCE_URL
+
+          python3 <<'PY'
+          import html
+          import json
+          import os
+          from pathlib import Path
+
+          field_length = int(os.environ.get("FIELD_LENGTH") or "0")
+          html_formatted = os.environ.get("FIELD_HTML_FORMATTED", "false").lower() == "true"
+          status = os.environ.get("WORKFLOW_JOB_STATUS", "unknown")
+          success = status == "success"
+          request_id = os.environ.get("REQUEST_ID", "")
+          repo = os.environ.get("GITHUB_REPOSITORY", "")
+          run_id = os.environ.get("GITHUB_RUN_ID", "")
+          workflow_name = os.environ.get("GITHUB_WORKFLOW", "")
+          pr_url = os.environ.get("PR_URL", "").strip()
+          run_url = f"https://github.com/{repo}/actions/runs/{run_id}" if repo and run_id else ""
+          snapshot_dir = os.environ.get("SNAPSHOT_DIR", "")
+          environment = os.environ.get("ENVIRONMENT_NAME", "")
+          org_id = os.environ.get("SALESFORCE_ORG_ID", "")
+          instance_url = os.environ.get("SALESFORCE_INSTANCE_URL", "")
+
+          inventory_path = Path(snapshot_dir) / "reports" / "metadata-inventory.json"
+          rows = []
+          if inventory_path.is_file():
+              try:
+                  rows = json.loads(inventory_path.read_text(encoding="utf-8"))
+              except Exception:
+                  rows = []
+
+          configured_limit = max(field_length, 1)
+          # 为 JSON 转义和 Salesforce 富文本清洗预留空间，同时不超过字段配置长度。
+          reserve = max(min(configured_limit // 20, 1000), 50)
+          content_limit = max(min(configured_limit - reserve, 120000), 100)
+
+          if html_formatted:
+              status_label = "成功" if success else "失败"
+              status_color = "#2e844a" if success else "#ba0517"
+              parts = [
+                  f'<p><strong>执行状态：</strong><span style="color:{status_color}">{status_label}</span></p>',
+                  '<table border="1" cellpadding="4" cellspacing="0">',
+                  '<tbody>',
+                  f'<tr><th>请求 ID</th><td>{html.escape(request_id)}</td></tr>',
+                  f'<tr><th>Workflow</th><td>{html.escape(workflow_name)}</td></tr>',
+                  f'<tr><th>环境</th><td>{html.escape(environment or "未识别")}</td></tr>',
+                  f'<tr><th>Org ID</th><td>{html.escape(org_id or "未识别")}</td></tr>',
+                  f'<tr><th>Instance URL</th><td>{html.escape(instance_url or "未识别")}</td></tr>',
+                  f'<tr><th>Metadata 类型数</th><td>{html.escape(os.environ.get("METADATA_TYPE_COUNT_CALLBACK") or "0")}</td></tr>',
+                  f'<tr><th>Metadata 名称数</th><td>{html.escape(os.environ.get("METADATA_ROW_COUNT") or "0")}</td></tr>',
+                  f'<tr><th>检索文件数</th><td>{html.escape(os.environ.get("RETRIEVED_SOURCE_FILE_COUNT") or "0")}</td></tr>',
+                  '</tbody></table>',
+              ]
+              if run_url:
+                  parts.append(f'<p><a href="{html.escape(run_url)}" target="_blank">查看 GitHub Actions 执行记录</a></p>')
+              if pr_url:
+                  parts.append(f'<p><a href="{html.escape(pr_url)}" target="_blank">查看 Metadata Snapshot Pull Request</a></p>')
+
+              if not success:
+                  parts.append('<p>Metadata 查询或后续处理失败。请打开 GitHub Actions 执行记录查看失败步骤。</p>')
+              elif rows:
+                  parts.extend([
+                      '<p><strong>Metadata 名称表</strong></p>',
+                      '<table border="1" cellpadding="4" cellspacing="0">',
+                      '<thead><tr><th>序号</th><th>Metadata 类型</th><th>Metadata 名称</th></tr></thead>',
+                      '<tbody>',
+                  ])
+                  included = 0
+                  for row in rows:
+                      candidate = (
+                          f'<tr><td>{html.escape(str(row.get("index", "")))}</td>'
+                          f'<td>{html.escape(str(row.get("metadataType", "")))}</td>'
+                          f'<td>{html.escape(str(row.get("metadataName", "")))}</td></tr>'
+                      )
+                      footer_reserve = 500
+                      if sum(len(p) for p in parts) + len(candidate) + footer_reserve > content_limit:
+                          break
+                      parts.append(candidate)
+                      included += 1
+                  parts.append('</tbody></table>')
+                  if included < len(rows):
+                      parts.append(
+                          f'<p>Salesforce 字段长度限制：当前显示 {included} / {len(rows)} 条。'
+                          '完整清单请在 GitHub Actions Artifact 或 Pull Request 的 reports/metadata-inventory.csv 中查看。</p>'
+                      )
+                  else:
+                      parts.append(f'<p>已返回全部 {len(rows)} 条 Metadata 名称。</p>')
+              else:
+                  parts.append('<p>未生成 Metadata 名称清单。</p>')
+
+              result = "".join(parts)
+          else:
+              lines = [
+                  f"执行状态：{'成功' if success else '失败'}",
+                  f"请求 ID：{request_id}",
+                  f"Workflow：{workflow_name}",
+                  f"环境：{environment or '未识别'}",
+                  f"Org ID：{org_id or '未识别'}",
+                  f"Instance URL：{instance_url or '未识别'}",
+                  f"Metadata 类型数：{os.environ.get('METADATA_TYPE_COUNT_CALLBACK') or '0'}",
+                  f"Metadata 名称数：{os.environ.get('METADATA_ROW_COUNT') or '0'}",
+                  f"检索文件数：{os.environ.get('RETRIEVED_SOURCE_FILE_COUNT') or '0'}",
+                  f"GitHub Actions：{run_url}",
+              ]
+              if pr_url:
+                  lines.append(f"Pull Request：{pr_url}")
+              lines.extend(["", "| 序号 | Metadata 类型 | Metadata 名称 |", "|---:|---|---|"])
+              included = 0
+              for row in rows:
+                  candidate = (
+                      f"| {row.get('index', '')} | {row.get('metadataType', '')} | "
+                      f"{row.get('metadataName', '')} |"
+                  )
+                  footer_reserve = 300
+                  if len("\n".join(lines + [candidate])) + footer_reserve > content_limit:
+                      break
+                  lines.append(candidate)
+                  included += 1
+              if included < len(rows):
+                  lines.extend([
+                      "",
+                      f"Salesforce 字段长度限制：当前显示 {included} / {len(rows)} 条。",
+                      "完整清单请查看 GitHub Artifact 或 reports/metadata-inventory.csv。",
+                  ])
+              result = "\n".join(lines)
+
+          if len(result) > content_limit:
+              result = result[:content_limit]
+
+          Path(os.environ["CALLBACK_RESULT"]).write_text(result, encoding="utf-8")
+          PY
+
+          jq -n \
+            --rawfile value "${CALLBACK_RESULT}" \
+            '{Execution_Result__c: $value}' \
+            > "${CALLBACK_PAYLOAD}"
+
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --request PATCH \
+            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data-binary "@${CALLBACK_PAYLOAD}" \
+            "${CALLBACK_INSTANCE_URL}/services/data/v${API_VERSION}/sobjects/Cursor__c/${RESOLVED_CURSOR_RECORD_ID}"
+
+          echo "Salesforce Cursor__c.Execution_Result__c 回写成功。"
+
+          rm -f \
+            "${CALLBACK_DISPLAY}" \
+            "${CALLBACK_DESCRIBE}" \
+            "${CALLBACK_PAYLOAD}" \
+            "${CALLBACK_RESULT}"
+
       - name: Logout Salesforce Org and clean temporary files
         if: always()
         continue-on-error: true
         shell: bash
         run: |
           set +e
+
+          if [ -n "${CALLBACK_SALESFORCE_ORG_USERNAME:-}" ]; then
+            sf org logout \
+              --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
+              --no-prompt \
+              >/dev/null 2>&1
+          fi
 
           if [ -n "${SALESFORCE_ORG_USERNAME:-}" ]; then
             sf org logout \
@@ -933,6 +1392,16 @@ jobs:
             "${RUNNER_TEMP}/salesforce-auth-result.json" \
             "${RUNNER_TEMP}/salesforce-org-display.json" \
             "${RUNNER_TEMP}/manifest-generation-result.json" \
-            "${RUNNER_TEMP}/salesforce-retrieve-result.json"
+            "${RUNNER_TEMP}/salesforce-retrieve-result.json" \
+            "${RUNNER_TEMP}/salesforce-callback-display-running.json" \
+            "${RUNNER_TEMP}/salesforce-callback-running.json" \
+            "${RUNNER_TEMP}/salesforce-callback-display-final.json" \
+            "${RUNNER_TEMP}/salesforce-cursor-describe.json" \
+            "${RUNNER_TEMP}/salesforce-callback-final.json" \
+            "${RUNNER_TEMP}/salesforce-execution-result.txt" \
+            "${RUNNER_TEMP}/callback-sfdx-auth-url.txt" \
+            "${RUNNER_TEMP}/salesforce-callback-auth-result.json" \
+            "${RUNNER_TEMP}/salesforce-callback-org-display.json" \
+            "${RUNNER_TEMP}/salesforce-cursor-request-query.json"
 
           exit 0
