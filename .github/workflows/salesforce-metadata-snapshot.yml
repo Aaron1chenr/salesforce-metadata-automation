@@ -346,32 +346,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          CALLBACK_DISPLAY="${RUNNER_TEMP}/salesforce-callback-display-running.json"
           CALLBACK_PAYLOAD="${RUNNER_TEMP}/salesforce-callback-running.json"
 
-          sf org display \
-            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
-            --verbose \
-            --json \
-            > "${CALLBACK_DISPLAY}"
-
-          ACCESS_TOKEN="$(jq -r '.result.accessToken // empty' "${CALLBACK_DISPLAY}")"
-          CALLBACK_INSTANCE_URL="$(jq -r '.result.instanceUrl // empty' "${CALLBACK_DISPLAY}")"
-
-          if [ -z "${ACCESS_TOKEN}" ] || [ -z "${CALLBACK_INSTANCE_URL}" ]; then
-            echo "::error::无法获取用于回写 Salesforce 的访问令牌或实例地址。"
-            exit 1
-          fi
-
-          echo "::add-mask::${ACCESS_TOKEN}"
-
           API_VERSION="$(
-            curl \
-              --fail \
-              --silent \
-              --show-error \
-              --header "Authorization: Bearer ${ACCESS_TOKEN}" \
-              "${CALLBACK_INSTANCE_URL}/services/data/" \
+            sf api request rest \
+              '/services/data/' \
+              --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
               | jq -r '.[-1].version // empty'
           )"
 
@@ -385,17 +365,15 @@ jobs:
             '{Execution_Result__c: $value}' \
             > "${CALLBACK_PAYLOAD}"
 
-          curl \
-            --fail-with-body \
-            --silent \
-            --show-error \
-            --request PATCH \
-            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
-            --header "Content-Type: application/json" \
-            --data-binary "@${CALLBACK_PAYLOAD}" \
-            "${CALLBACK_INSTANCE_URL}/services/data/v${API_VERSION}/sobjects/Cursor__c/${RESOLVED_CURSOR_RECORD_ID}"
+          sf api request rest \
+            "/services/data/v${API_VERSION}/sobjects/Cursor__c/${RESOLVED_CURSOR_RECORD_ID}" \
+            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
+            --method PATCH \
+            --header "Content-Type:application/json" \
+            --body "@${CALLBACK_PAYLOAD}" \
+            >/dev/null
 
-          rm -f "${CALLBACK_DISPLAY}" "${CALLBACK_PAYLOAD}"
+          rm -f "${CALLBACK_PAYLOAD}"
 
       - name: Resolve environment and snapshot directory
         id: snapshot_context
@@ -1136,42 +1114,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          CALLBACK_DISPLAY="${RUNNER_TEMP}/salesforce-callback-display-final.json"
           CALLBACK_DESCRIBE="${RUNNER_TEMP}/salesforce-cursor-describe.json"
           CALLBACK_PAYLOAD="${RUNNER_TEMP}/salesforce-callback-final.json"
           CALLBACK_RESULT="${RUNNER_TEMP}/salesforce-execution-result.txt"
 
-          sf org display \
-            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
-            --verbose \
-            --json \
-            > "${CALLBACK_DISPLAY}"
+          API_VERSION="$(
+            sf api request rest \
+              '/services/data/' \
+              --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
+              | jq -r '.[-1].version // empty'
+          )"
 
-          ACCESS_TOKEN="$(jq -r '.result.accessToken // empty' "${CALLBACK_DISPLAY}")"
-          CALLBACK_INSTANCE_URL="$(jq -r '.result.instanceUrl // empty' "${CALLBACK_DISPLAY}")"
-
-          if [ -z "${ACCESS_TOKEN}" ] || [ -z "${CALLBACK_INSTANCE_URL}" ]; then
-            echo "::error::无法获取用于回写 Salesforce 的访问令牌或实例地址。"
+          if [ -z "${API_VERSION}" ]; then
+            echo "::error::无法识别 Salesforce REST API 版本。"
             exit 1
           fi
 
-          echo "::add-mask::${ACCESS_TOKEN}"
-
-          API_VERSION=""
-          if [ -n "${SNAPSHOT_DIR:-}" ] && [ -f "${SNAPSHOT_DIR}/sfdx-project.json" ]; then
-            API_VERSION="$(jq -r '.sourceApiVersion // empty' "${SNAPSHOT_DIR}/sfdx-project.json")"
-          fi
-          if [ -z "${API_VERSION}" ]; then
-            API_VERSION="67.0"
-          fi
-
-          curl \
-            --fail-with-body \
-            --silent \
-            --show-error \
-            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
-            "${CALLBACK_INSTANCE_URL}/services/data/v${API_VERSION}/sobjects/Cursor__c/describe" \
-            > "${CALLBACK_DESCRIBE}"
+          sf api request rest \
+            "/services/data/v${API_VERSION}/sobjects/Cursor__c/describe" \
+            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
+            --stream-to-file "${CALLBACK_DESCRIBE}"
 
           FIELD_LENGTH="$(
             jq -r '
@@ -1348,20 +1310,17 @@ jobs:
             '{Execution_Result__c: $value}' \
             > "${CALLBACK_PAYLOAD}"
 
-          curl \
-            --fail-with-body \
-            --silent \
-            --show-error \
-            --request PATCH \
-            --header "Authorization: Bearer ${ACCESS_TOKEN}" \
-            --header "Content-Type: application/json" \
-            --data-binary "@${CALLBACK_PAYLOAD}" \
-            "${CALLBACK_INSTANCE_URL}/services/data/v${API_VERSION}/sobjects/Cursor__c/${RESOLVED_CURSOR_RECORD_ID}"
+          sf api request rest \
+            "/services/data/v${API_VERSION}/sobjects/Cursor__c/${RESOLVED_CURSOR_RECORD_ID}" \
+            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
+            --method PATCH \
+            --header "Content-Type:application/json" \
+            --body "@${CALLBACK_PAYLOAD}" \
+            >/dev/null
 
           echo "Salesforce Cursor__c.Execution_Result__c 回写成功。"
 
           rm -f \
-            "${CALLBACK_DISPLAY}" \
             "${CALLBACK_DESCRIBE}" \
             "${CALLBACK_PAYLOAD}" \
             "${CALLBACK_RESULT}"
