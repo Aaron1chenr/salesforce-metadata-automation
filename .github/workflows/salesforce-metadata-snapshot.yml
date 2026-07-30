@@ -57,8 +57,6 @@ jobs:
             github.event.client_payload.requestId ||
             '' }}
 
-      # 默认按 Cursor__c.Request_Id__c 定位记录。
-      # 如实际字段 API Name 不同，在 GitHub Repository Variables 中设置 CURSOR_REQUEST_ID_FIELD。
       CURSOR_REQUEST_ID_FIELD: ${{ vars.CURSOR_REQUEST_ID_FIELD || 'Request_Id__c' }}
 
       SF_LIST_METADATA_BATCH_SIZE: "5"
@@ -102,6 +100,9 @@ jobs:
 
           echo "Salesforce CLI version:"
           sf --version
+
+          sf data update bulk --help >/dev/null
+          sf sobject describe --help >/dev/null
 
       - name: Authenticate Org from DEV_SFDX_AUTH_URL
         id: salesforce_auth
@@ -247,13 +248,32 @@ jobs:
           umask 077
           printf '%s' "${CALLBACK_SALESFORCE_AUTH_URL}" > "${CALLBACK_AUTH_FILE}"
 
+          set +e
+
           sf org login sfdx-url \
             --sfdx-url-file "${CALLBACK_AUTH_FILE}" \
             --alias "${CALLBACK_AUTH_ALIAS}" \
             --json \
             > "${CALLBACK_AUTH_RESULT}"
 
-          CALLBACK_ORG_USERNAME="$(jq -r '.result.username // empty' "${CALLBACK_AUTH_RESULT}")"
+          CALLBACK_AUTH_EXIT_CODE=$?
+
+          set -e
+
+          if [ "${CALLBACK_AUTH_EXIT_CODE}" -ne 0 ]; then
+            CALLBACK_AUTH_ERROR="$(
+              jq -r \
+                '.message // .name // "Salesforce callback Org 登录失败。"' \
+                "${CALLBACK_AUTH_RESULT}" 2>/dev/null || true
+            )"
+
+            echo "::error::${CALLBACK_AUTH_ERROR}"
+            exit "${CALLBACK_AUTH_EXIT_CODE}"
+          fi
+
+          CALLBACK_ORG_USERNAME="$(
+            jq -r '.result.username // empty' "${CALLBACK_AUTH_RESULT}"
+          )"
 
           if [ -z "${CALLBACK_ORG_USERNAME}" ]; then
             echo "::error::无法识别回写 Salesforce Org 的 Username。"
@@ -265,10 +285,19 @@ jobs:
             --json \
             > "${CALLBACK_ORG_DISPLAY}"
 
-          CALLBACK_INSTANCE_URL="$(jq -r '.result.instanceUrl // empty' "${CALLBACK_ORG_DISPLAY}")"
-          CALLBACK_ORG_ID="$(jq -r '.result.id // .result.orgId // empty' "${CALLBACK_ORG_DISPLAY}")"
+          CALLBACK_INSTANCE_URL="$(
+            jq -r '.result.instanceUrl // empty' "${CALLBACK_ORG_DISPLAY}"
+          )"
 
-          if [ -z "${CALLBACK_INSTANCE_URL}" ] || [ -z "${CALLBACK_ORG_ID}" ]; then
+          CALLBACK_ORG_ID="$(
+            jq -r \
+              '.result.id // .result.orgId // empty' \
+              "${CALLBACK_ORG_DISPLAY}"
+          )"
+
+          if [ -z "${CALLBACK_INSTANCE_URL}" ] ||
+             [ -z "${CALLBACK_ORG_ID}" ]; then
+
             echo "::error::无法识别回写 Salesforce Org 的 Instance URL 或 Org ID。"
             exit 1
           fi
@@ -296,12 +325,15 @@ jobs:
 
           QUERY_RESULT="${RUNNER_TEMP}/salesforce-cursor-request-query.json"
 
-          # 使用 Python 安全转义 SOQL 字符串，避免请求 ID 中的单引号或反斜杠破坏查询。
           ESCAPED_REQUEST_ID="$(
             python3 <<'PY_ESCAPE'
           import os
+
           value = os.environ["REQUEST_ID"]
-          print(value.replace("\\", "\\\\").replace("'", "\\'"), end="")
+          print(
+              value.replace("\\", "\\\\").replace("'", "\\'"),
+              end="",
+          )
           PY_ESCAPE
           )"
 
@@ -313,7 +345,9 @@ jobs:
             --json \
             > "${QUERY_RESULT}"
 
-          MATCH_COUNT="$(jq -r '.result.totalSize // 0' "${QUERY_RESULT}")"
+          MATCH_COUNT="$(
+            jq -r '.result.totalSize // 0' "${QUERY_RESULT}"
+          )"
 
           if [ "${MATCH_COUNT}" -eq 0 ]; then
             echo "::error::未找到 ${CURSOR_REQUEST_ID_FIELD} = ${REQUEST_ID} 的 Cursor__c 记录。"
@@ -325,7 +359,9 @@ jobs:
             exit 1
           fi
 
-          RESOLVED_CURSOR_RECORD_ID="$(jq -r '.result.records[0].Id // empty' "${QUERY_RESULT}")"
+          RESOLVED_CURSOR_RECORD_ID="$(
+            jq -r '.result.records[0].Id // empty' "${QUERY_RESULT}"
+          )"
 
           if [[ ! "${RESOLVED_CURSOR_RECORD_ID}" =~ ^[A-Za-z0-9]{15,18}$ ]]; then
             echo "::error::未能从请求 ID 解析出有效的 Cursor__c 记录 ID。"
@@ -346,34 +382,133 @@ jobs:
         run: |
           set -euo pipefail
 
-          CALLBACK_PAYLOAD="${RUNNER_TEMP}/salesforce-callback-running.json"
+          echo "Callback implementation: stable-bulk-update-v1"
 
-          API_VERSION="$(
-            sf api request rest \
-              '/services/data/' \
-              --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
-              | jq -r '.[-1].version // empty'
-          )"
+          RUNNING_CSV="${RUNNER_TEMP}/salesforce-callback-running.csv"
+          RUNNING_UPDATE_JSON="${RUNNER_TEMP}/salesforce-callback-running-update.json"
+          RUNNING_UPDATE_STDERR="${RUNNER_TEMP}/salesforce-callback-running-update.stderr"
 
-          if [ -z "${API_VERSION}" ]; then
-            echo "::error::无法识别 Salesforce REST API 版本。"
+          export RUNNING_CSV
+          export REQUEST_ID
+          export RESOLVED_CURSOR_RECORD_ID
+          export GITHUB_WORKFLOW
+
+          python3 <<'PY_RUNNING_CSV'
+          import csv
+          import os
+          from pathlib import Path
+
+          record_id = os.environ["RESOLVED_CURSOR_RECORD_ID"]
+          request_id = os.environ["REQUEST_ID"]
+          workflow_name = os.environ.get(
+              "GITHUB_WORKFLOW",
+              "Salesforce Metadata Snapshot",
+          )
+
+          value = (
+              "执行状态：GitHub Action 已启动\n"
+              f"请求 ID：{request_id}\n"
+              f"Workflow：{workflow_name}\n"
+              "正在从 DEV_SFDX_AUTH_URL 对应的 Org 查询 Metadata，"
+              "请稍后刷新当前记录。"
+          )
+
+          output = Path(os.environ["RUNNING_CSV"])
+
+          with output.open(
+              "w",
+              encoding="utf-8",
+              newline="",
+          ) as handle:
+              writer = csv.writer(
+                  handle,
+                  quoting=csv.QUOTE_ALL,
+                  lineterminator="\n",
+              )
+
+              writer.writerow([
+                  "Id",
+                  "Execution_Result__c",
+              ])
+
+              writer.writerow([
+                  record_id,
+                  value,
+              ])
+          PY_RUNNING_CSV
+
+          set +e
+
+          sf data update bulk \
+            --sobject "Cursor__c" \
+            --file "${RUNNING_CSV}" \
+            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
+            --line-ending LF \
+            --wait 10 \
+            --json \
+            > "${RUNNING_UPDATE_JSON}" \
+            2> "${RUNNING_UPDATE_STDERR}"
+
+          UPDATE_EXIT_CODE=$?
+
+          set -e
+
+          if [ "${UPDATE_EXIT_CODE}" -ne 0 ]; then
+            echo "::error::标记 Cursor__c 请求为执行中失败。"
+
+            if [ -s "${RUNNING_UPDATE_STDERR}" ]; then
+              sed -n '1,160p' \
+                "${RUNNING_UPDATE_STDERR}" >&2
+            fi
+
+            if [ -s "${RUNNING_UPDATE_JSON}" ]; then
+              jq '
+                del(
+                  .result.accessToken,
+                  .result.refreshToken,
+                  .result.sfdxAuthUrl
+                )
+              ' "${RUNNING_UPDATE_JSON}" 2>/dev/null ||
+                cat "${RUNNING_UPDATE_JSON}"
+            fi
+
+            exit "${UPDATE_EXIT_CODE}"
+          fi
+
+          if ! jq -e \
+            '.status == 0' \
+            "${RUNNING_UPDATE_JSON}" \
+            >/dev/null; then
+
+            echo "::error::Salesforce 返回了非成功状态，未能标记请求为执行中。"
+
+            jq '.' "${RUNNING_UPDATE_JSON}" 2>/dev/null ||
+              cat "${RUNNING_UPDATE_JSON}"
+
             exit 1
           fi
 
-          jq -n \
-            --arg value "执行状态：GitHub Action 已启动\n请求 ID：${REQUEST_ID}\nWorkflow：${GITHUB_WORKFLOW}\n正在从 DEV_SFDX_AUTH_URL 对应的 Org 查询 Metadata，请稍后刷新当前记录。" \
-            '{Execution_Result__c: $value}' \
-            > "${CALLBACK_PAYLOAD}"
+          RUNNING_FAILED_COUNT="$(
+            jq -r \
+              '.result.numberRecordsFailed // 0' \
+              "${RUNNING_UPDATE_JSON}"
+          )"
 
-          sf api request rest \
-            "/services/data/v${API_VERSION}/sobjects/Cursor__c/${RESOLVED_CURSOR_RECORD_ID}" \
-            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
-            --method PATCH \
-            --header "Content-Type:application/json" \
-            --body "@${CALLBACK_PAYLOAD}" \
-            >/dev/null
+          if [ "${RUNNING_FAILED_COUNT}" != "0" ]; then
+            echo "::error::标记执行中时 Salesforce 报告 ${RUNNING_FAILED_COUNT} 条记录失败。"
 
-          rm -f "${CALLBACK_PAYLOAD}"
+            jq '.' "${RUNNING_UPDATE_JSON}" 2>/dev/null ||
+              cat "${RUNNING_UPDATE_JSON}"
+
+            exit 1
+          fi
+
+          echo "Cursor__c 已标记为执行中。"
+
+          rm -f \
+            "${RUNNING_CSV}" \
+            "${RUNNING_UPDATE_JSON}" \
+            "${RUNNING_UPDATE_STDERR}"
 
       - name: Resolve environment and snapshot directory
         id: snapshot_context
@@ -563,7 +698,9 @@ jobs:
             )"
 
             echo "::error::${MANIFEST_ERROR}"
+
             rm -f "${MANIFEST_RESULT}"
+
             exit "${MANIFEST_EXIT_CODE}"
           fi
 
@@ -577,6 +714,7 @@ jobs:
             fi
 
             rm -f "${MANIFEST_RESULT}"
+
             exit 1
           fi
 
@@ -590,7 +728,9 @@ jobs:
 
           if [ "${TYPE_COUNT}" -eq 0 ]; then
             echo "::error::生成的 package.xml 中没有 Metadata 类型。"
+
             rm -f "${MANIFEST_RESULT}"
+
             exit 1
           fi
 
@@ -650,6 +790,7 @@ jobs:
 
             if [ -f "${RETRIEVE_RESULT}" ]; then
               echo "Retrieve result:"
+
               jq \
                 'del(
                   .result.accessToken,
@@ -660,6 +801,7 @@ jobs:
             fi
 
             rm -f "${RETRIEVE_RESULT}"
+
             exit "${RETRIEVE_EXIT_CODE}"
           fi
 
@@ -718,7 +860,7 @@ jobs:
           export TYPE_SUMMARY_MARKDOWN="reports/metadata-type-summary.md"
           export INVENTORY_JSON="reports/metadata-inventory.json"
 
-          python3 <<'PY'
+          python3 <<'PY_INVENTORY'
           import csv
           import json
           import os
@@ -735,14 +877,22 @@ jobs:
           if not manifest_path.is_file():
               raise SystemExit(f"Manifest 不存在：{manifest_path}")
 
-          markdown_path.parent.mkdir(parents=True, exist_ok=True)
+          markdown_path.parent.mkdir(
+              parents=True,
+              exist_ok=True,
+          )
 
-          namespace = {"m": "http://soap.sforce.com/2006/04/metadata"}
+          namespace = {
+              "m": "http://soap.sforce.com/2006/04/metadata"
+          }
+
           root = ET.parse(manifest_path).getroot()
 
           rows = []
+
           for type_node in root.findall("m:types", namespace):
               name_node = type_node.find("m:name", namespace)
+
               metadata_type = (
                   name_node.text.strip()
                   if name_node is not None and name_node.text
@@ -750,23 +900,57 @@ jobs:
               )
 
               members = []
-              for member_node in type_node.findall("m:members", namespace):
+
+              for member_node in type_node.findall(
+                  "m:members",
+                  namespace,
+              ):
                   if member_node.text and member_node.text.strip():
                       members.append(member_node.text.strip())
 
-              for member_name in sorted(set(members), key=str.casefold):
-                  rows.append((metadata_type, member_name))
+              for member_name in sorted(
+                  set(members),
+                  key=str.casefold,
+              ):
+                  rows.append((
+                      metadata_type,
+                      member_name,
+                  ))
 
-          rows.sort(key=lambda item: (item[0].casefold(), item[1].casefold()))
+          rows.sort(
+              key=lambda item: (
+                  item[0].casefold(),
+                  item[1].casefold(),
+              )
+          )
 
           if not rows:
-              raise SystemExit("package.xml 中未发现任何 Metadata 名称。")
+              raise SystemExit(
+                  "package.xml 中未发现任何 Metadata 名称。"
+              )
 
-          with csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
+          with csv_path.open(
+              "w",
+              encoding="utf-8-sig",
+              newline="",
+          ) as handle:
               writer = csv.writer(handle)
-              writer.writerow(["序号", "Metadata 类型", "Metadata 名称"])
-              for index, (metadata_type, member_name) in enumerate(rows, start=1):
-                  writer.writerow([index, metadata_type, member_name])
+
+              writer.writerow([
+                  "序号",
+                  "Metadata 类型",
+                  "Metadata 名称",
+              ])
+
+              for index, (
+                  metadata_type,
+                  member_name,
+              ) in enumerate(rows, start=1):
+                  writer.writerow([
+                      index,
+                      metadata_type,
+                      member_name,
+                  ])
 
           inventory = [
               {
@@ -774,43 +958,140 @@ jobs:
                   "metadataType": metadata_type,
                   "metadataName": member_name,
               }
-              for index, (metadata_type, member_name) in enumerate(rows, start=1)
+              for index, (
+                  metadata_type,
+                  member_name,
+              ) in enumerate(rows, start=1)
           ]
+
           json_path.write_text(
-              json.dumps(inventory, ensure_ascii=False, indent=2) + "\n",
+              json.dumps(
+                  inventory,
+                  ensure_ascii=False,
+                  indent=2,
+              ) + "\n",
               encoding="utf-8",
           )
 
-          with markdown_path.open("w", encoding="utf-8", newline="\n") as handle:
-              handle.write("# Salesforce Metadata 名称清单\n\n")
-              handle.write(f"共 **{len(rows)}** 个 Metadata 组件。\n\n")
-              handle.write("| 序号 | Metadata 类型 | Metadata 名称 |\n")
-              handle.write("|---:|---|---|\n")
+          with markdown_path.open(
+              "w",
+              encoding="utf-8",
+              newline="\n",
+          ) as handle:
+              handle.write(
+                  "# Salesforce Metadata 名称清单\n\n"
+              )
 
-              for index, (metadata_type, member_name) in enumerate(rows, start=1):
-                  safe_type = metadata_type.replace("|", "\\|").replace("\n", " ")
-                  safe_name = member_name.replace("|", "\\|").replace("\n", " ")
-                  handle.write(f"| {index} | `{safe_type}` | `{safe_name}` |\n")
+              handle.write(
+                  f"共 **{len(rows)}** 个 Metadata 组件。\n\n"
+              )
 
-          type_counts = Counter(metadata_type for metadata_type, _ in rows)
-          with summary_path.open("w", encoding="utf-8", newline="\n") as handle:
-              handle.write("# Salesforce Metadata 类型汇总\n\n")
-              handle.write(f"共 **{len(type_counts)}** 种 Metadata 类型、**{len(rows)}** 个组件。\n\n")
-              handle.write("| Metadata 类型 | 组件数量 |\n")
-              handle.write("|---|---:|\n")
+              handle.write(
+                  "| 序号 | Metadata 类型 | Metadata 名称 |\n"
+              )
 
-              for metadata_type in sorted(type_counts, key=str.casefold):
-                  safe_type = metadata_type.replace("|", "\\|").replace("\n", " ")
-                  handle.write(f"| `{safe_type}` | {type_counts[metadata_type]} |\n")
+              handle.write(
+                  "|---:|---|---|\n"
+              )
 
-          output_path = Path(os.environ["GITHUB_OUTPUT"])
-          with output_path.open("a", encoding="utf-8") as handle:
-              handle.write(f"metadata_row_count={len(rows)}\n")
-              handle.write(f"metadata_table_type_count={len(type_counts)}\n")
-              handle.write(f"metadata_markdown={markdown_path.as_posix()}\n")
-              handle.write(f"metadata_csv={csv_path.as_posix()}\n")
-              handle.write(f"metadata_json={json_path.as_posix()}\n")
-              handle.write(f"type_summary_markdown={summary_path.as_posix()}\n")
+              for index, (
+                  metadata_type,
+                  member_name,
+              ) in enumerate(rows, start=1):
+                  safe_type = (
+                      metadata_type
+                      .replace("|", "\\|")
+                      .replace("\n", " ")
+                  )
+
+                  safe_name = (
+                      member_name
+                      .replace("|", "\\|")
+                      .replace("\n", " ")
+                  )
+
+                  handle.write(
+                      f"| {index} | `{safe_type}` | `{safe_name}` |\n"
+                  )
+
+          type_counts = Counter(
+              metadata_type
+              for metadata_type, _ in rows
+          )
+
+          with summary_path.open(
+              "w",
+              encoding="utf-8",
+              newline="\n",
+          ) as handle:
+              handle.write(
+                  "# Salesforce Metadata 类型汇总\n\n"
+              )
+
+              handle.write(
+                  f"共 **{len(type_counts)}** 种 Metadata 类型、"
+                  f"**{len(rows)}** 个组件。\n\n"
+              )
+
+              handle.write(
+                  "| Metadata 类型 | 组件数量 |\n"
+              )
+
+              handle.write(
+                  "|---|---:|\n"
+              )
+
+              for metadata_type in sorted(
+                  type_counts,
+                  key=str.casefold,
+              ):
+                  safe_type = (
+                      metadata_type
+                      .replace("|", "\\|")
+                      .replace("\n", " ")
+                  )
+
+                  handle.write(
+                      f"| `{safe_type}` | "
+                      f"{type_counts[metadata_type]} |\n"
+                  )
+
+          output_path = Path(
+              os.environ["GITHUB_OUTPUT"]
+          )
+
+          with output_path.open(
+              "a",
+              encoding="utf-8",
+          ) as handle:
+              handle.write(
+                  f"metadata_row_count={len(rows)}\n"
+              )
+
+              handle.write(
+                  "metadata_table_type_count="
+                  f"{len(type_counts)}\n"
+              )
+
+              handle.write(
+                  "metadata_markdown="
+                  f"{markdown_path.as_posix()}\n"
+              )
+
+              handle.write(
+                  "metadata_csv="
+                  f"{csv_path.as_posix()}\n"
+              )
+
+              handle.write(
+                  "metadata_json="
+                  f"{json_path.as_posix()}\n"
+              )
+
+              handle.write(
+                  "type_summary_markdown="
+                  f"{summary_path.as_posix()}\n"
+              )
 
           print("Metadata inventory table generated.")
           print(f"Metadata components: {len(rows)}")
@@ -818,7 +1099,7 @@ jobs:
           print(f"Markdown: {markdown_path.as_posix()}")
           print(f"CSV: {csv_path.as_posix()}")
           print(f"JSON: {json_path.as_posix()}")
-          PY
+          PY_INVENTORY
 
       - name: Generate snapshot information
         shell: bash
@@ -925,9 +1206,6 @@ jobs:
 
           echo "Snapshot project structure:"
 
-          # 不在 set -o pipefail 下使用 find | sort | head。
-          # 当文件超过 300 个时，head 会提前关闭管道，导致上游命令收到 SIGPIPE，
-          # GitHub Actions 会把本来已经成功的校验步骤判定为失败。
           SNAPSHOT_FILE_LIST="${RUNNER_TEMP}/snapshot-file-list.txt"
 
           find "${SNAPSHOT_DIR}" \
@@ -940,7 +1218,10 @@ jobs:
             "${SNAPSHOT_FILE_LIST}.unsorted" \
             > "${SNAPSHOT_FILE_LIST}"
 
-          SNAPSHOT_FILE_COUNT="$(wc -l < "${SNAPSHOT_FILE_LIST}" | xargs)"
+          SNAPSHOT_FILE_COUNT="$(
+            wc -l < "${SNAPSHOT_FILE_LIST}" |
+              xargs
+          )"
 
           sed -n '1,300p' "${SNAPSHOT_FILE_LIST}"
 
@@ -984,7 +1265,10 @@ jobs:
           cat "${TYPE_SUMMARY_FILE}" >> "${GITHUB_STEP_SUMMARY}"
           echo "" >> "${GITHUB_STEP_SUMMARY}"
 
-          INVENTORY_SIZE="$(wc -c < "${INVENTORY_FILE}" | xargs)"
+          INVENTORY_SIZE="$(
+            wc -c < "${INVENTORY_FILE}" |
+              xargs
+          )"
 
           if [ "${INVENTORY_SIZE}" -le "${SUMMARY_SIZE_LIMIT}" ]; then
             cat "${INVENTORY_FILE}" >> "${GITHUB_STEP_SUMMARY}"
@@ -996,7 +1280,9 @@ jobs:
               echo ""
             } >> "${GITHUB_STEP_SUMMARY}"
 
-            head -203 "${INVENTORY_FILE}" >> "${GITHUB_STEP_SUMMARY}"
+            sed -n '1,203p' \
+              "${INVENTORY_FILE}" \
+              >> "${GITHUB_STEP_SUMMARY}"
 
             {
               echo ""
@@ -1137,30 +1423,64 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "Callback implementation: stable-bulk-update-v1"
+
           CALLBACK_DESCRIBE="${RUNNER_TEMP}/salesforce-cursor-describe.json"
-          CALLBACK_PAYLOAD="${RUNNER_TEMP}/salesforce-callback-final.json"
+          DESCRIBE_STDERR="${RUNNER_TEMP}/salesforce-cursor-describe.stderr"
           CALLBACK_RESULT="${RUNNER_TEMP}/salesforce-execution-result.txt"
+          CALLBACK_CSV="${RUNNER_TEMP}/salesforce-cursor-callback.csv"
+          CALLBACK_UPDATE_JSON="${RUNNER_TEMP}/salesforce-cursor-update.json"
+          CALLBACK_UPDATE_STDERR="${RUNNER_TEMP}/salesforce-cursor-update.stderr"
 
-          API_VERSION="$(
-            sf api request rest \
-              '/services/data/' \
-              --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
-              | jq -r '.[-1].version // empty'
-          )"
+          set +e
 
-          if [ -z "${API_VERSION}" ]; then
-            echo "::error::无法识别 Salesforce REST API 版本。"
+          sf sobject describe \
+            --sobject "Cursor__c" \
+            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
+            --json \
+            > "${CALLBACK_DESCRIBE}" \
+            2> "${DESCRIBE_STDERR}"
+
+          DESCRIBE_EXIT_CODE=$?
+
+          set -e
+
+          if [ "${DESCRIBE_EXIT_CODE}" -ne 0 ]; then
+            echo "::error::读取 Cursor__c 对象描述失败。"
+
+            if [ -s "${DESCRIBE_STDERR}" ]; then
+              sed -n '1,160p' \
+                "${DESCRIBE_STDERR}" >&2
+            fi
+
+            if [ -s "${CALLBACK_DESCRIBE}" ]; then
+              jq -r \
+                '.message // .name // .' \
+                "${CALLBACK_DESCRIBE}" \
+                2>/dev/null || true
+            fi
+
+            exit "${DESCRIBE_EXIT_CODE}"
+          fi
+
+          if ! jq -e \
+            '.status == 0 and (.result.fields | type == "array")' \
+            "${CALLBACK_DESCRIBE}" \
+            >/dev/null; then
+
+            echo "::error::Cursor__c Describe 返回结构无效。"
+
+            jq -r \
+              '.message // .name // .' \
+              "${CALLBACK_DESCRIBE}" \
+              2>/dev/null || true
+
             exit 1
           fi
 
-          sf api request rest \
-            "/services/data/v${API_VERSION}/sobjects/Cursor__c/describe" \
-            --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
-            --stream-to-file "${CALLBACK_DESCRIBE}"
-
           FIELD_LENGTH="$(
             jq -r '
-              .fields[]
+              .result.fields[]
               | select(.name == "Execution_Result__c")
               | .length // 0
             ' "${CALLBACK_DESCRIBE}"
@@ -1168,19 +1488,47 @@ jobs:
 
           FIELD_HTML_FORMATTED="$(
             jq -r '
-              .fields[]
+              .result.fields[]
               | select(.name == "Execution_Result__c")
               | .htmlFormatted // false
             ' "${CALLBACK_DESCRIBE}"
           )"
 
-          if [ -z "${FIELD_LENGTH}" ] || [ "${FIELD_LENGTH}" = "0" ]; then
-            echo "::error::Cursor__c.Execution_Result__c 不存在，或当前用户无字段访问权限。"
+          FIELD_TYPE="$(
+            jq -r '
+              .result.fields[]
+              | select(.name == "Execution_Result__c")
+              | .type // "unknown"
+            ' "${CALLBACK_DESCRIBE}"
+          )"
+
+          FIELD_UPDATEABLE="$(
+            jq -r '
+              .result.fields[]
+              | select(.name == "Execution_Result__c")
+              | .updateable // false
+            ' "${CALLBACK_DESCRIBE}"
+          )"
+
+          if [ -z "${FIELD_LENGTH}" ] ||
+             [ "${FIELD_LENGTH}" = "0" ]; then
+
+            echo "::error::Cursor__c.Execution_Result__c 不存在，或当前回写用户无字段读取权限。"
             exit 1
           fi
 
+          if [ "${FIELD_UPDATEABLE}" != "true" ]; then
+            echo "::error::当前回写用户没有 Cursor__c.Execution_Result__c 的编辑权限。"
+            exit 1
+          fi
+
+          echo "Execution_Result__c field type: ${FIELD_TYPE}"
+          echo "Execution_Result__c configured length: ${FIELD_LENGTH}"
+          echo "Execution_Result__c HTML formatted: ${FIELD_HTML_FORMATTED}"
+
           export FIELD_LENGTH
           export FIELD_HTML_FORMATTED
+          export FIELD_TYPE
           export WORKFLOW_JOB_STATUS
           export REQUEST_ID
           export RESOLVED_CURSOR_RECORD_ID
@@ -1193,160 +1541,524 @@ jobs:
           export RETRIEVED_SOURCE_FILE_COUNT
           export RETRIEVED_OBJECT_COUNT
           export CALLBACK_RESULT
+          export CALLBACK_CSV
           export SNAPSHOT_DIR
           export ENVIRONMENT_NAME
           export SALESFORCE_ORG_ID
           export SALESFORCE_INSTANCE_URL
 
-          python3 <<'PY'
+          python3 <<'PY_CALLBACK'
+          import csv
           import html
           import json
           import os
           from pathlib import Path
 
-          field_length = int(os.environ.get("FIELD_LENGTH") or "0")
-          html_formatted = os.environ.get("FIELD_HTML_FORMATTED", "false").lower() == "true"
-          status = os.environ.get("WORKFLOW_JOB_STATUS", "unknown")
-          success = status == "success"
-          request_id = os.environ.get("REQUEST_ID", "")
-          repo = os.environ.get("GITHUB_REPOSITORY", "")
-          run_id = os.environ.get("GITHUB_RUN_ID", "")
-          workflow_name = os.environ.get("GITHUB_WORKFLOW", "")
-          pr_url = os.environ.get("PR_URL", "").strip()
-          run_url = f"https://github.com/{repo}/actions/runs/{run_id}" if repo and run_id else ""
-          snapshot_dir = os.environ.get("SNAPSHOT_DIR", "")
-          environment = os.environ.get("ENVIRONMENT_NAME", "")
-          org_id = os.environ.get("SALESFORCE_ORG_ID", "")
-          instance_url = os.environ.get("SALESFORCE_INSTANCE_URL", "")
+          field_length = int(
+              os.environ.get("FIELD_LENGTH") or "0"
+          )
 
-          inventory_path = Path(snapshot_dir) / "reports" / "metadata-inventory.json"
+          html_formatted = (
+              os.environ
+              .get("FIELD_HTML_FORMATTED", "false")
+              .lower() == "true"
+          )
+
+          status = os.environ.get(
+              "WORKFLOW_JOB_STATUS",
+              "unknown",
+          )
+
+          success = status == "success"
+
+          request_id = os.environ.get(
+              "REQUEST_ID",
+              "",
+          )
+
+          repo = os.environ.get(
+              "GITHUB_REPOSITORY",
+              "",
+          )
+
+          run_id = os.environ.get(
+              "GITHUB_RUN_ID",
+              "",
+          )
+
+          workflow_name = os.environ.get(
+              "GITHUB_WORKFLOW",
+              "",
+          )
+
+          pr_url = os.environ.get(
+              "PR_URL",
+              "",
+          ).strip()
+
+          run_url = (
+              f"https://github.com/{repo}/actions/runs/{run_id}"
+              if repo and run_id
+              else ""
+          )
+
+          snapshot_dir = os.environ.get(
+              "SNAPSHOT_DIR",
+              "",
+          )
+
+          environment = os.environ.get(
+              "ENVIRONMENT_NAME",
+              "",
+          )
+
+          org_id = os.environ.get(
+              "SALESFORCE_ORG_ID",
+              "",
+          )
+
+          instance_url = os.environ.get(
+              "SALESFORCE_INSTANCE_URL",
+              "",
+          )
+
+          inventory_path = (
+              Path(snapshot_dir)
+              / "reports"
+              / "metadata-inventory.json"
+          )
+
           rows = []
+
           if inventory_path.is_file():
               try:
-                  rows = json.loads(inventory_path.read_text(encoding="utf-8"))
+                  rows = json.loads(
+                      inventory_path.read_text(
+                          encoding="utf-8"
+                      )
+                  )
               except Exception:
                   rows = []
 
-          configured_limit = max(field_length, 1)
-          # 为 JSON 转义和 Salesforce 富文本清洗预留空间，同时不超过字段配置长度。
-          reserve = max(min(configured_limit // 20, 1000), 50)
-          content_limit = max(min(configured_limit - reserve, 120000), 100)
+          configured_limit = max(
+              field_length,
+              1,
+          )
+
+          reserve = max(
+              min(
+                  configured_limit // 20,
+                  1000,
+              ),
+              50,
+          )
+
+          content_limit = max(
+              min(
+                  configured_limit - reserve,
+                  120000,
+              ),
+              100,
+          )
 
           if html_formatted:
-              status_label = "成功" if success else "失败"
-              status_color = "#2e844a" if success else "#ba0517"
+              status_label = (
+                  "成功"
+                  if success
+                  else "失败"
+              )
+
+              status_color = (
+                  "#2e844a"
+                  if success
+                  else "#ba0517"
+              )
+
               parts = [
-                  f'<p><strong>执行状态：</strong><span style="color:{status_color}">{status_label}</span></p>',
-                  '<table border="1" cellpadding="4" cellspacing="0">',
-                  '<tbody>',
-                  f'<tr><th>请求 ID</th><td>{html.escape(request_id)}</td></tr>',
-                  f'<tr><th>Workflow</th><td>{html.escape(workflow_name)}</td></tr>',
-                  f'<tr><th>环境</th><td>{html.escape(environment or "未识别")}</td></tr>',
-                  f'<tr><th>Org ID</th><td>{html.escape(org_id or "未识别")}</td></tr>',
-                  f'<tr><th>Instance URL</th><td>{html.escape(instance_url or "未识别")}</td></tr>',
-                  f'<tr><th>Metadata 类型数</th><td>{html.escape(os.environ.get("METADATA_TYPE_COUNT_CALLBACK") or "0")}</td></tr>',
-                  f'<tr><th>Metadata 名称数</th><td>{html.escape(os.environ.get("METADATA_ROW_COUNT") or "0")}</td></tr>',
-                  f'<tr><th>检索文件数</th><td>{html.escape(os.environ.get("RETRIEVED_SOURCE_FILE_COUNT") or "0")}</td></tr>',
-                  '</tbody></table>',
+                  (
+                      "<p><strong>执行状态：</strong>"
+                      f'<span style="color:{status_color}">'
+                      f"{status_label}</span></p>"
+                  ),
+                  (
+                      '<table border="1" '
+                      'cellpadding="4" '
+                      'cellspacing="0">'
+                  ),
+                  "<tbody>",
+                  (
+                      "<tr><th>请求 ID</th><td>"
+                      f"{html.escape(request_id)}"
+                      "</td></tr>"
+                  ),
+                  (
+                      "<tr><th>Workflow</th><td>"
+                      f"{html.escape(workflow_name)}"
+                      "</td></tr>"
+                  ),
+                  (
+                      "<tr><th>环境</th><td>"
+                      f"{html.escape(environment or '未识别')}"
+                      "</td></tr>"
+                  ),
+                  (
+                      "<tr><th>Org ID</th><td>"
+                      f"{html.escape(org_id or '未识别')}"
+                      "</td></tr>"
+                  ),
+                  (
+                      "<tr><th>Instance URL</th><td>"
+                      f"{html.escape(instance_url or '未识别')}"
+                      "</td></tr>"
+                  ),
+                  (
+                      "<tr><th>Metadata 类型数</th><td>"
+                      f"{html.escape(os.environ.get('METADATA_TYPE_COUNT_CALLBACK') or '0')}"
+                      "</td></tr>"
+                  ),
+                  (
+                      "<tr><th>Metadata 名称数</th><td>"
+                      f"{html.escape(os.environ.get('METADATA_ROW_COUNT') or '0')}"
+                      "</td></tr>"
+                  ),
+                  (
+                      "<tr><th>检索文件数</th><td>"
+                      f"{html.escape(os.environ.get('RETRIEVED_SOURCE_FILE_COUNT') or '0')}"
+                      "</td></tr>"
+                  ),
+                  (
+                      "<tr><th>检索对象数</th><td>"
+                      f"{html.escape(os.environ.get('RETRIEVED_OBJECT_COUNT') or '0')}"
+                      "</td></tr>"
+                  ),
+                  "</tbody></table>",
               ]
+
               if run_url:
-                  parts.append(f'<p><a href="{html.escape(run_url)}" target="_blank">查看 GitHub Actions 执行记录</a></p>')
+                  parts.append(
+                      (
+                          f'<p><a href="{html.escape(run_url)}" '
+                          'target="_blank">'
+                          "查看 GitHub Actions 执行记录"
+                          "</a></p>"
+                      )
+                  )
+
               if pr_url:
-                  parts.append(f'<p><a href="{html.escape(pr_url)}" target="_blank">查看 Metadata Snapshot Pull Request</a></p>')
+                  parts.append(
+                      (
+                          f'<p><a href="{html.escape(pr_url)}" '
+                          'target="_blank">'
+                          "查看 Metadata Snapshot Pull Request"
+                          "</a></p>"
+                      )
+                  )
 
               if not success:
-                  parts.append('<p>Metadata 查询或后续处理失败。请打开 GitHub Actions 执行记录查看失败步骤。</p>')
+                  parts.append(
+                      (
+                          "<p>Metadata 查询或后续处理失败。"
+                          "请打开 GitHub Actions 执行记录"
+                          "查看失败步骤。</p>"
+                      )
+                  )
+
               elif rows:
                   parts.extend([
-                      '<p><strong>Metadata 名称表</strong></p>',
-                      '<table border="1" cellpadding="4" cellspacing="0">',
-                      '<thead><tr><th>序号</th><th>Metadata 类型</th><th>Metadata 名称</th></tr></thead>',
-                      '<tbody>',
+                      (
+                          "<p><strong>"
+                          "Metadata 名称表"
+                          "</strong></p>"
+                      ),
+                      (
+                          '<table border="1" '
+                          'cellpadding="4" '
+                          'cellspacing="0">'
+                      ),
+                      (
+                          "<thead><tr>"
+                          "<th>序号</th>"
+                          "<th>Metadata 类型</th>"
+                          "<th>Metadata 名称</th>"
+                          "</tr></thead>"
+                      ),
+                      "<tbody>",
                   ])
+
                   included = 0
+
                   for row in rows:
                       candidate = (
-                          f'<tr><td>{html.escape(str(row.get("index", "")))}</td>'
-                          f'<td>{html.escape(str(row.get("metadataType", "")))}</td>'
-                          f'<td>{html.escape(str(row.get("metadataName", "")))}</td></tr>'
+                          "<tr><td>"
+                          f"{html.escape(str(row.get('index', '')))}"
+                          "</td><td>"
+                          f"{html.escape(str(row.get('metadataType', '')))}"
+                          "</td><td>"
+                          f"{html.escape(str(row.get('metadataName', '')))}"
+                          "</td></tr>"
                       )
+
                       footer_reserve = 500
-                      if sum(len(p) for p in parts) + len(candidate) + footer_reserve > content_limit:
+
+                      if (
+                          sum(
+                              len(part)
+                              for part in parts
+                          )
+                          + len(candidate)
+                          + footer_reserve
+                          > content_limit
+                      ):
                           break
+
                       parts.append(candidate)
                       included += 1
-                  parts.append('</tbody></table>')
+
+                  parts.append("</tbody></table>")
+
                   if included < len(rows):
                       parts.append(
-                          f'<p>Salesforce 字段长度限制：当前显示 {included} / {len(rows)} 条。'
-                          '完整清单请在 GitHub Actions Artifact 或 Pull Request 的 reports/metadata-inventory.csv 中查看。</p>'
+                          (
+                              "<p>Salesforce 字段长度限制："
+                              f"当前显示 {included} / {len(rows)} 条。"
+                              "完整清单请在 GitHub Actions Artifact "
+                              "或 Pull Request 的 "
+                              "reports/metadata-inventory.csv "
+                              "中查看。</p>"
+                          )
                       )
                   else:
-                      parts.append(f'<p>已返回全部 {len(rows)} 条 Metadata 名称。</p>')
+                      parts.append(
+                          (
+                              "<p>已返回全部 "
+                              f"{len(rows)} 条 Metadata 名称。</p>"
+                          )
+                      )
+
               else:
-                  parts.append('<p>未生成 Metadata 名称清单。</p>')
+                  parts.append(
+                      "<p>未生成 Metadata 名称清单。</p>"
+                  )
 
               result = "".join(parts)
+
           else:
               lines = [
-                  f"执行状态：{'成功' if success else '失败'}",
+                  (
+                      "执行状态："
+                      f"{'成功' if success else '失败'}"
+                  ),
                   f"请求 ID：{request_id}",
                   f"Workflow：{workflow_name}",
                   f"环境：{environment or '未识别'}",
                   f"Org ID：{org_id or '未识别'}",
                   f"Instance URL：{instance_url or '未识别'}",
-                  f"Metadata 类型数：{os.environ.get('METADATA_TYPE_COUNT_CALLBACK') or '0'}",
-                  f"Metadata 名称数：{os.environ.get('METADATA_ROW_COUNT') or '0'}",
-                  f"检索文件数：{os.environ.get('RETRIEVED_SOURCE_FILE_COUNT') or '0'}",
+                  (
+                      "Metadata 类型数："
+                      f"{os.environ.get('METADATA_TYPE_COUNT_CALLBACK') or '0'}"
+                  ),
+                  (
+                      "Metadata 名称数："
+                      f"{os.environ.get('METADATA_ROW_COUNT') or '0'}"
+                  ),
+                  (
+                      "检索文件数："
+                      f"{os.environ.get('RETRIEVED_SOURCE_FILE_COUNT') or '0'}"
+                  ),
+                  (
+                      "检索对象数："
+                      f"{os.environ.get('RETRIEVED_OBJECT_COUNT') or '0'}"
+                  ),
                   f"GitHub Actions：{run_url}",
               ]
+
               if pr_url:
-                  lines.append(f"Pull Request：{pr_url}")
-              lines.extend(["", "| 序号 | Metadata 类型 | Metadata 名称 |", "|---:|---|---|"])
+                  lines.append(
+                      f"Pull Request：{pr_url}"
+                  )
+
+              lines.extend([
+                  "",
+                  "| 序号 | Metadata 类型 | Metadata 名称 |",
+                  "|---:|---|---|",
+              ])
+
               included = 0
+
               for row in rows:
                   candidate = (
-                      f"| {row.get('index', '')} | {row.get('metadataType', '')} | "
+                      f"| {row.get('index', '')} | "
+                      f"{row.get('metadataType', '')} | "
                       f"{row.get('metadataName', '')} |"
                   )
+
                   footer_reserve = 300
-                  if len("\n".join(lines + [candidate])) + footer_reserve > content_limit:
+
+                  if (
+                      len(
+                          "\n".join(
+                              lines + [candidate]
+                          )
+                      )
+                      + footer_reserve
+                      > content_limit
+                  ):
                       break
+
                   lines.append(candidate)
                   included += 1
+
               if included < len(rows):
                   lines.extend([
                       "",
-                      f"Salesforce 字段长度限制：当前显示 {included} / {len(rows)} 条。",
-                      "完整清单请查看 GitHub Artifact 或 reports/metadata-inventory.csv。",
+                      (
+                          "Salesforce 字段长度限制："
+                          f"当前显示 {included} / {len(rows)} 条。"
+                      ),
+                      (
+                          "完整清单请查看 GitHub Artifact "
+                          "或 reports/metadata-inventory.csv。"
+                      ),
                   ])
+
               result = "\n".join(lines)
 
           if len(result) > content_limit:
               result = result[:content_limit]
 
-          Path(os.environ["CALLBACK_RESULT"]).write_text(result, encoding="utf-8")
-          PY
+          result_path = Path(
+              os.environ["CALLBACK_RESULT"]
+          )
 
-          jq -n \
-            --rawfile value "${CALLBACK_RESULT}" \
-            '{Execution_Result__c: $value}' \
-            > "${CALLBACK_PAYLOAD}"
+          result_path.write_text(
+              result,
+              encoding="utf-8",
+          )
 
-          sf api request rest \
-            "/services/data/v${API_VERSION}/sobjects/Cursor__c/${RESOLVED_CURSOR_RECORD_ID}" \
+          callback_csv = Path(
+              os.environ["CALLBACK_CSV"]
+          )
+
+          with callback_csv.open(
+              "w",
+              encoding="utf-8",
+              newline="",
+          ) as handle:
+              writer = csv.writer(
+                  handle,
+                  quoting=csv.QUOTE_ALL,
+                  lineterminator="\n",
+              )
+
+              writer.writerow([
+                  "Id",
+                  "Execution_Result__c",
+              ])
+
+              writer.writerow([
+                  os.environ["RESOLVED_CURSOR_RECORD_ID"],
+                  result,
+              ])
+          PY_CALLBACK
+
+          set +e
+
+          sf data update bulk \
+            --sobject "Cursor__c" \
+            --file "${CALLBACK_CSV}" \
             --target-org "${CALLBACK_SALESFORCE_ORG_USERNAME}" \
-            --method PATCH \
-            --header "Content-Type:application/json" \
-            --body "@${CALLBACK_PAYLOAD}" \
-            >/dev/null
+            --line-ending LF \
+            --wait 10 \
+            --json \
+            > "${CALLBACK_UPDATE_JSON}" \
+            2> "${CALLBACK_UPDATE_STDERR}"
+
+          UPDATE_EXIT_CODE=$?
+
+          set -e
+
+          if [ "${UPDATE_EXIT_CODE}" -ne 0 ]; then
+            echo "::error::Cursor__c.Execution_Result__c 回写失败。"
+
+            if [ -s "${CALLBACK_UPDATE_STDERR}" ]; then
+              echo "Salesforce CLI stderr:" >&2
+
+              sed -n '1,200p' \
+                "${CALLBACK_UPDATE_STDERR}" >&2
+            fi
+
+            if [ -s "${CALLBACK_UPDATE_JSON}" ]; then
+              echo "Salesforce CLI result:"
+
+              jq '
+                del(
+                  .result.accessToken,
+                  .result.refreshToken,
+                  .result.sfdxAuthUrl
+                )
+              ' "${CALLBACK_UPDATE_JSON}" 2>/dev/null ||
+                cat "${CALLBACK_UPDATE_JSON}"
+            fi
+
+            exit "${UPDATE_EXIT_CODE}"
+          fi
+
+          if ! jq -e \
+            '.status == 0' \
+            "${CALLBACK_UPDATE_JSON}" \
+            >/dev/null; then
+
+            echo "::error::Salesforce 返回了非成功状态。"
+
+            jq '.' \
+              "${CALLBACK_UPDATE_JSON}" \
+              2>/dev/null ||
+              cat "${CALLBACK_UPDATE_JSON}"
+
+            exit 1
+          fi
+
+          FAILED_COUNT="$(
+            jq -r \
+              '.result.numberRecordsFailed // 0' \
+              "${CALLBACK_UPDATE_JSON}"
+          )"
+
+          PROCESSED_COUNT="$(
+            jq -r \
+              '.result.numberRecordsProcessed // 0' \
+              "${CALLBACK_UPDATE_JSON}"
+          )"
+
+          JOB_STATE="$(
+            jq -r \
+              '.result.state // "Unknown"' \
+              "${CALLBACK_UPDATE_JSON}"
+          )"
+
+          if [ "${FAILED_COUNT}" != "0" ]; then
+            echo "::error::Salesforce Bulk Update 报告 ${FAILED_COUNT} 条记录失败。"
+
+            jq '.' \
+              "${CALLBACK_UPDATE_JSON}" \
+              2>/dev/null ||
+              cat "${CALLBACK_UPDATE_JSON}"
+
+            exit 1
+          fi
 
           echo "Salesforce Cursor__c.Execution_Result__c 回写成功。"
+          echo "Bulk job state: ${JOB_STATE}"
+          echo "Processed records: ${PROCESSED_COUNT}"
+          echo "Failed records: ${FAILED_COUNT}"
 
           rm -f \
             "${CALLBACK_DESCRIBE}" \
-            "${CALLBACK_PAYLOAD}" \
-            "${CALLBACK_RESULT}"
+            "${DESCRIBE_STDERR}" \
+            "${CALLBACK_RESULT}" \
+            "${CALLBACK_CSV}" \
+            "${CALLBACK_UPDATE_JSON}" \
+            "${CALLBACK_UPDATE_STDERR}"
 
       - name: Logout Salesforce Org and clean temporary files
         if: always()
@@ -1375,12 +2087,15 @@ jobs:
             "${RUNNER_TEMP}/salesforce-org-display.json" \
             "${RUNNER_TEMP}/manifest-generation-result.json" \
             "${RUNNER_TEMP}/salesforce-retrieve-result.json" \
-            "${RUNNER_TEMP}/salesforce-callback-display-running.json" \
-            "${RUNNER_TEMP}/salesforce-callback-running.json" \
-            "${RUNNER_TEMP}/salesforce-callback-display-final.json" \
+            "${RUNNER_TEMP}/salesforce-callback-running.csv" \
+            "${RUNNER_TEMP}/salesforce-callback-running-update.json" \
+            "${RUNNER_TEMP}/salesforce-callback-running-update.stderr" \
             "${RUNNER_TEMP}/salesforce-cursor-describe.json" \
-            "${RUNNER_TEMP}/salesforce-callback-final.json" \
+            "${RUNNER_TEMP}/salesforce-cursor-describe.stderr" \
             "${RUNNER_TEMP}/salesforce-execution-result.txt" \
+            "${RUNNER_TEMP}/salesforce-cursor-callback.csv" \
+            "${RUNNER_TEMP}/salesforce-cursor-update.json" \
+            "${RUNNER_TEMP}/salesforce-cursor-update.stderr" \
             "${RUNNER_TEMP}/callback-sfdx-auth-url.txt" \
             "${RUNNER_TEMP}/salesforce-callback-auth-result.json" \
             "${RUNNER_TEMP}/salesforce-callback-org-display.json" \
