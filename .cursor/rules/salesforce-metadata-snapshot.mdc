@@ -15,7 +15,7 @@ When an incoming webhook payload has `action` equal to `salesforce_metadata_snap
    - Do not inspect or depend on a local/default Salesforce target org.
    - `NoDefaultEnvError` is not a valid reason to block this request because the target org is authenticated inside GitHub Actions through `DEV_SFDX_AUTH_URL`.
 2. Do not create or edit Salesforce metadata locally.
-3. Trigger the workflow file `retrieve-salesforce-metadata.yml` in repository `Aaron1chenr/salesforce-metadata-automation` on branch `main`.
+3. Trigger the workflow file `salesforce-metadata-snapshot.yml` in repository `Aaron1chenr/salesforce-metadata-automation` on branch `main`.
 4. Pass the originating Salesforce `Cursor__c` record ID as `cursor_record_id`.
 5. Pass `metadata_types` as an empty string when the request asks for all metadata or does not name a type.
 6. After GitHub accepts the dispatch, report the GitHub workflow URL when available. Do not wait for the metadata retrieval to finish. The workflow itself writes the final table to `Cursor__c.Execution_Result__c`.
@@ -44,7 +44,7 @@ Use the GitHub REST API. The environment must contain a secret named `GH_PAT` wi
 set -euo pipefail
 
 REPOSITORY="Aaron1chenr/salesforce-metadata-automation"
-WORKFLOW_FILE="retrieve-salesforce-metadata.yml"
+WORKFLOW_FILE="salesforce-metadata-snapshot.yml"
 TARGET_REF="main"
 
 RECORD_ID="$(printf '%s' "$WEBHOOK_PAYLOAD" | jq -r '.recordId // .cursorRecordId // .cursor_record_id // empty')"
