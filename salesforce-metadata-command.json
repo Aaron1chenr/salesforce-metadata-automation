@@ -1,0 +1,8 @@
+{
+  "source": "salesforce",
+  "action": "salesforce_metadata_snapshot",
+  "requestId": "{{Cursor__c.Request_Id__c}}",
+  "metadataTypes": "",
+  "environmentName": "",
+  "prompt": "查询 DEV_SFDX_AUTH_URL 对应 Org 中全部可访问的 Metadata，并将结果表格回写到当前 Cursor__c.Execution_Result__c。"
+}
