@@ -1,0 +1,47 @@
+[
+  {
+    "index": 1,
+    "metadataType": "CustomLabel",
+    "metadataName": "trlhdtips__tt_BaseURL"
+  },
+  {
+    "index": 2,
+    "metadataType": "CustomLabel",
+    "metadataName": "trlhdtips__tt_ConfimCancel"
+  },
+  {
+    "index": 3,
+    "metadataType": "CustomLabel",
+    "metadataName": "trlhdtips__tt_ConfimOK"
+  },
+  {
+    "index": 4,
+    "metadataType": "CustomLabel",
+    "metadataName": "trlhdtips__tt_EnterPackageId"
+  },
+  {
+    "index": 5,
+    "metadataType": "CustomLabel",
+    "metadataName": "trlhdtips__tt_InvalidPackageId"
+  },
+  {
+    "index": 6,
+    "metadataType": "CustomLabel",
+    "metadataName": "trlhdtips__tt_ResetPasswordFail"
+  },
+  {
+    "index": 7,
+    "metadataType": "CustomLabel",
+    "metadataName": "trlhdtips__tt_ResetPasswordSuccess"
+  },
+  {
+    "index": 8,
+    "metadataType": "CustomLabel",
+    "metadataName": "trlhdtips__tt_ResetPasswordTitle"
+  },
+  {
+    "index": 9,
+    "metadataType": "CustomLabel",
+    "metadataName": "trlhdtips__tt_ResetPasswordWarning"
+  }
+]

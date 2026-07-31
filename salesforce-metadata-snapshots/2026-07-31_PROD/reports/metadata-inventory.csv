@@ -1,0 +1,10 @@
+﻿序号,Metadata 类型,Metadata 名称
+1,CustomLabel,trlhdtips__tt_BaseURL
+2,CustomLabel,trlhdtips__tt_ConfimCancel
+3,CustomLabel,trlhdtips__tt_ConfimOK
+4,CustomLabel,trlhdtips__tt_EnterPackageId
+5,CustomLabel,trlhdtips__tt_InvalidPackageId
+6,CustomLabel,trlhdtips__tt_ResetPasswordFail
+7,CustomLabel,trlhdtips__tt_ResetPasswordSuccess
+8,CustomLabel,trlhdtips__tt_ResetPasswordTitle
+9,CustomLabel,trlhdtips__tt_ResetPasswordWarning
