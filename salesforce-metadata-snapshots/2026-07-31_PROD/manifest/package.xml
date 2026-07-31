@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>trlhdtips__tt_BaseURL</members>
+        <members>trlhdtips__tt_ConfimCancel</members>
+        <members>trlhdtips__tt_ConfimOK</members>
+        <members>trlhdtips__tt_EnterPackageId</members>
+        <members>trlhdtips__tt_InvalidPackageId</members>
+        <members>trlhdtips__tt_ResetPasswordFail</members>
+        <members>trlhdtips__tt_ResetPasswordSuccess</members>
+        <members>trlhdtips__tt_ResetPasswordTitle</members>
+        <members>trlhdtips__tt_ResetPasswordWarning</members>
+        <name>CustomLabel</name>
+    </types>
+    <version>67.0</version>
+</Package>
