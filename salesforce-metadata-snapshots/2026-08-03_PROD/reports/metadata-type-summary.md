@@ -1,0 +1,71 @@
+# Salesforce Metadata 类型汇总
+
+共 **65** 种 Metadata 类型、**1275** 个组件。
+
+| Metadata 类型 | 组件数量 |
+|---|---:|
+| `ApexClass` | 3 |
+| `ApexEmailNotifications` | 1 |
+| `ApexTrigger` | 1 |
+| `AppMenu` | 2 |
+| `AssignmentRule` | 2 |
+| `AssignmentRules` | 2 |
+| `AuthProvider` | 1 |
+| `AutoResponseRules` | 2 |
+| `BusinessProcess` | 1 |
+| `CleanDataService` | 1 |
+| `Community` | 1 |
+| `ContentAsset` | 1 |
+| `CustomApplication` | 26 |
+| `CustomField` | 84 |
+| `CustomLabels` | 1 |
+| `CustomObject` | 244 |
+| `CustomObjectTranslation` | 15 |
+| `CustomTab` | 7 |
+| `DuplicateRule` | 2 |
+| `EmailTemplate` | 17 |
+| `EntitlementProcess` | 1 |
+| `EscalationRule` | 1 |
+| `EscalationRules` | 1 |
+| `ExternalClientApplication` | 1 |
+| `ExtlClntAppConfigurablePolicies` | 1 |
+| `ExtlClntAppGlobalOauthSettings` | 1 |
+| `ExtlClntAppOauthConfigurablePolicies` | 1 |
+| `ExtlClntAppOauthSecuritySettings` | 1 |
+| `ExtlClntAppOauthSettings` | 1 |
+| `FlexiPage` | 7 |
+| `Flow` | 2 |
+| `FlowDefinition` | 2 |
+| `HomePageLayout` | 1 |
+| `IframeWhiteListUrlSettings` | 1 |
+| `InstalledPackage` | 2 |
+| `Layout` | 135 |
+| `ListView` | 163 |
+| `ManagedContentType` | 3 |
+| `MatchingRule` | 3 |
+| `MatchingRules` | 4 |
+| `McpServerDefinition` | 1 |
+| `MilestoneType` | 3 |
+| `NotificationTypeConfig` | 1 |
+| `PermissionSet` | 2 |
+| `PermissionSetGroup` | 1 |
+| `Profile` | 41 |
+| `ProfilePasswordPolicy` | 1 |
+| `ProfileSessionSetting` | 1 |
+| `QuickAction` | 25 |
+| `RecordType` | 7 |
+| `RemoteSiteSetting` | 2 |
+| `Report` | 12 |
+| `ReportType` | 6 |
+| `Role` | 18 |
+| `SamlSsoConfig` | 1 |
+| `Settings` | 157 |
+| `SharingRules` | 147 |
+| `StandardValueSet` | 48 |
+| `TopicsForObjects` | 38 |
+| `Translations` | 8 |
+| `ValidationRule` | 1 |
+| `WebLink` | 4 |
+| `Workflow` | 1 |
+| `WorkflowFieldUpdate` | 1 |
+| `WorkflowFlowAutomation` | 2 |
