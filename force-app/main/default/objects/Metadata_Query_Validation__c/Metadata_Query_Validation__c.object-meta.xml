@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>用于验证Salesforce Metadata查询功能。</description>
+    <enableActivities>true</enableActivities>
+    <enableReports>true</enableReports>
+    <enableSearch>true</enableSearch>
+    <label>验证查询Metadata</label>
+    <nameField>
+        <displayFormat>MQV-{0000}</displayFormat>
+        <label>验证查询Metadata名称</label>
+        <type>AutoNumber</type>
+    </nameField>
+    <pluralLabel>验证查询Metadata</pluralLabel>
+    <sharingModel>ReadWrite</sharingModel>
+</CustomObject>
