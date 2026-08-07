@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>用于系统联调、接口验证及集成测试。</description>
+    <enableActivities>true</enableActivities>
+    <enableReports>true</enableReports>
+    <enableSearch>true</enableSearch>
+    <label>联调对象</label>
+    <nameField>
+        <displayFormat>IT-{000000}</displayFormat>
+        <label>联调编号</label>
+        <type>AutoNumber</type>
+    </nameField>
+    <pluralLabel>联调对象</pluralLabel>
+    <sharingModel>ReadWrite</sharingModel>
+</CustomObject>
